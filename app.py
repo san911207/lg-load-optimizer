@@ -1333,16 +1333,88 @@ def _step_range_label(ps: List[Dict[str, Any]]) -> str:
 # =========================================================================
 # Sidebar Load picker (only shown on Load Plan page)
 # =========================================================================
+LOADS_REQUIRED_COLS = ["load_id", "model_code", "quantity"]
+LOADS_OPTIONAL_COLS = {"destination": None, "pickup_date": None, "truck_type": None}
+
+
+def normalize_loads_df(raw: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """Loads upload normalizer — case-insensitive cols, NaN drop, type coerce."""
+    df = _normalize_columns(raw)
+    warnings: list[str] = []
+    missing = [c for c in LOADS_REQUIRED_COLS if c not in df.columns]
+    if missing:
+        raise ValueError(
+            f"Missing required columns: {missing}. "
+            f"Found columns: {list(df.columns)}. "
+            f"Loads schema: load_id (text), model_code (text matching Model_Master), "
+            f"quantity (integer). Optional: destination, pickup_date, truck_type."
+        )
+    for col, default in LOADS_OPTIONAL_COLS.items():
+        if col not in df.columns:
+            df[col] = default
+    df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce")
+    invalid = df[LOADS_REQUIRED_COLS].isna().any(axis=1) | (df["quantity"] <= 0)
+    if invalid.any():
+        warnings.append(f"Dropped {invalid.sum()} row(s) with missing/zero values")
+        df = df.loc[~invalid].reset_index(drop=True)
+    df["quantity"] = df["quantity"].astype(int)
+    df["load_id"] = df["load_id"].astype(str).str.strip()
+    df["model_code"] = df["model_code"].astype(str).str.strip()
+    return df, warnings
+
+
 def sidebar_load_picker() -> Optional[Tuple[str, pd.DataFrame, Optional[str]]]:
     st.sidebar.markdown("### Load source")
+    st.sidebar.download_button(
+        "📋 Download Loads template",
+        build_loads_template_bytes(),
+        file_name="lg_loads_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        key="loads_template_dl",
+        help="Pre-filled template with 3 example rows + Schema_Notes sheet.",
+    )
+    st.sidebar.caption(
+        "Only **3 columns** needed: `load_id`, `model_code`, `quantity`. "
+        "Dimensions/weight are auto-pulled from Model_Master via `model_code`."
+    )
     uploaded = st.sidebar.file_uploader(
-        "Upload Loads Excel (sheet: Loads)", type=["xlsx"], key="loads_uploader"
+        "Upload Loads Excel", type=["xlsx"], key="loads_uploader",
+        help="Required: load_id, model_code, quantity. "
+             "Do NOT include width/depth/height/weight — those come from Model_Master.",
     )
     use_sample = st.sidebar.checkbox("Use sample data", value=not uploaded)
 
     df_loads: Optional[pd.DataFrame] = None
     if uploaded:
-        df_loads = pd.read_excel(uploaded, sheet_name="Loads")
+        try:
+            xls = pd.ExcelFile(uploaded)
+            sheets = xls.sheet_names
+        except Exception as exc:  # noqa: BLE001
+            st.sidebar.error(f"Cannot read Excel: {exc}")
+            return None
+        # Auto-pick "Loads" if present, otherwise let user choose
+        def _default_idx(target: str, options: List[str]) -> int:
+            for i, name in enumerate(options):
+                if name.strip().lower() == target.lower():
+                    return i
+            return 0
+        chosen_sheet = st.sidebar.selectbox(
+            "Loads sheet", sheets,
+            index=_default_idx("Loads", sheets), key="loads_sheet_pick",
+        )
+        try:
+            raw_loads = pd.read_excel(xls, sheet_name=chosen_sheet)
+        except Exception as exc:  # noqa: BLE001
+            st.sidebar.error(f"Sheet read failed: {exc}")
+            return None
+        try:
+            df_loads, lwarns = normalize_loads_df(raw_loads)
+        except ValueError as exc:
+            st.sidebar.error(f"⚠ {exc}")
+            return None
+        for w in lwarns:
+            st.sidebar.info(f"ℹ {w}")
     elif use_sample:
         df_loads = st.session_state.df_loads
 
@@ -1355,6 +1427,48 @@ def sidebar_load_picker() -> Optional[Tuple[str, pd.DataFrame, Optional[str]]]:
     grp = df_loads[df_loads["load_id"] == chosen]
     destination = grp["destination"].iloc[0] if "destination" in grp.columns else None
     return chosen, grp, destination
+
+
+def build_loads_template_bytes() -> bytes:
+    """Generate a minimal Loads template — only 3 required columns.
+
+    Dimensions/weight/stackable are NOT needed in this file — they are looked
+    up automatically from Model_Master by `model_code`.
+    """
+    from io import BytesIO
+    template = pd.DataFrame([
+        {"load_id": "L001", "model_code": "LF29H8330S", "quantity": 6},
+        {"load_id": "L001", "model_code": "WM4000HWA",  "quantity": 8},
+        {"load_id": "L001", "model_code": "DLEX4000W",  "quantity": 8},
+        {"load_id": "L001", "model_code": "LDFN4542S",  "quantity": 10},
+        {"load_id": "L001", "model_code": "LMV1764ST",  "quantity": 12},
+        {"load_id": "L002", "model_code": "OLED65C4PUA", "quantity": 40},
+        {"load_id": "L002", "model_code": "OLED77C4PUA", "quantity": 20},
+    ])
+    notes = pd.DataFrame([
+        {"column": "load_id",   "required": "YES",
+         "description": "Shipment / order ID. Multiple rows sharing the same load_id "
+                        "are one shipment (one truck plan)."},
+        {"column": "model_code", "required": "YES",
+         "description": "Must match a model_code in Model_Master. App will look up "
+                        "width/depth/height/weight/stackable automatically — DO NOT "
+                        "include those columns here."},
+        {"column": "quantity",   "required": "YES",
+         "description": "Number of units. Positive integer."},
+        {"column": "destination", "required": "optional",
+         "description": "Display only — destination DC / customer code."},
+        {"column": "pickup_date", "required": "optional", "description": "Display only."},
+        {"column": "truck_type",  "required": "optional",
+         "description": "Display hint. App simulates both 26ft and 53ft regardless."},
+        {"column": "(dims / weight / stackable)", "required": "NO — auto-mapped",
+         "description": "These come from Model_Master via model_code lookup. "
+                        "Do not duplicate them in the Loads file."},
+    ])
+    buf = BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        template.to_excel(w, sheet_name="Loads", index=False)
+        notes.to_excel(w, sheet_name="Schema_Notes", index=False)
+    return buf.getvalue()
 
 
 # =========================================================================
