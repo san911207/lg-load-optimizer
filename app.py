@@ -77,10 +77,46 @@ OUT_DIR = APP_DIR / "outputs"
 OUT_DIR.mkdir(exist_ok=True)
 
 # Per-user persistent data dir (so .exe users keep their custom master across
-# restarts without re-uploading).
-USER_DATA_DIR = Path.home() / "Documents" / "LG_Load_Optimizer"
-USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+# restarts without re-uploading). Tries Documents first, falls back if locale
+# rename or permissions blocks it.
+def _resolve_user_data_dir() -> Path:
+    candidates = [
+        Path.home() / "Documents" / "LG_Load_Optimizer",
+        Path.home() / "LG_Load_Optimizer",
+    ]
+    for d in candidates:
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            probe = d / ".write_probe"
+            probe.write_text("ok")
+            probe.unlink()
+            return d
+        except Exception:
+            continue
+    return candidates[-1]
+
+
+USER_DATA_DIR = _resolve_user_data_dir()
 USER_MASTER_PATH = USER_DATA_DIR / "master.xlsx"
+
+# Column schema the engine relies on (everything else is optional)
+REQUIRED_MASTER_COLS = [
+    "model_code", "width_in", "depth_in", "height_in", "weight_lb", "stackable",
+]
+OPTIONAL_MASTER_COLS = {
+    "category": "Uncategorized",
+    "this_side_up": True,
+    "load_bear_lb": 0.0,
+    "fragile": False,
+    "notes": "",
+    "volume_cft": None,   # auto-computed if missing
+}
+
+REQUIRED_TRUCK_COLS = ["truck_type", "length_in", "width_in", "height_in", "max_payload_lb"]
+OPTIONAL_TRUCK_COLS = {
+    "display_name": None,
+    "cargo_volume_cft": None,  # auto-computed if missing
+}
 
 
 @st.cache_data
@@ -111,8 +147,7 @@ def save_user_master(
     df_trucks: Optional[pd.DataFrame] = None,
     df_loads: Optional[pd.DataFrame] = None,
 ) -> Path:
-    """Persist current master to ~/Documents/LG_Load_Optimizer/master.xlsx so
-    it auto-loads on the next .exe launch."""
+    """Persist current master to user data dir so it auto-loads next launch."""
     USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
     with pd.ExcelWriter(USER_MASTER_PATH, engine="openpyxl") as w:
         df_master.to_excel(w, sheet_name="Model_Master", index=False)
@@ -120,8 +155,122 @@ def save_user_master(
             df_trucks.to_excel(w, sheet_name="Truck_Master", index=False)
         if df_loads is not None:
             df_loads.to_excel(w, sheet_name="Loads", index=False)
-    _load_workbook.clear()  # invalidate cached read
+    _load_workbook.clear()
     return USER_MASTER_PATH
+
+
+def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Lowercase + strip + collapse whitespace in column names."""
+    df = df.copy()
+    df.columns = [
+        str(c).strip().lower().replace(" ", "_").replace("(", "").replace(")", "")
+        for c in df.columns
+    ]
+    return df
+
+
+def _coerce_bool(s: pd.Series) -> pd.Series:
+    """Accept True/False/1/0/Y/N/Yes/No (any case)."""
+    def _conv(v):
+        if isinstance(v, bool):
+            return v
+        if pd.isna(v):
+            return False
+        if isinstance(v, (int, float)):
+            return bool(v)
+        s = str(v).strip().lower()
+        return s in ("true", "1", "yes", "y", "t")
+    return s.apply(_conv)
+
+
+def normalize_master_df(raw: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """
+    Take an arbitrary upload, return (clean_df, warnings).
+    Raises ValueError if required columns are missing.
+    """
+    df = _normalize_columns(raw)
+    warnings: list[str] = []
+
+    missing = [c for c in REQUIRED_MASTER_COLS if c not in df.columns]
+    if missing:
+        raise ValueError(
+            f"Missing required columns: {missing}. "
+            f"Found columns: {list(df.columns)}. "
+            f"Required schema: {REQUIRED_MASTER_COLS}"
+        )
+
+    # Fill optional columns
+    for col, default in OPTIONAL_MASTER_COLS.items():
+        if col not in df.columns:
+            df[col] = default
+            if default is not None:
+                warnings.append(f"Column '{col}' missing — filled with default ({default!r})")
+
+    # Coerce types
+    for col in ("width_in", "depth_in", "height_in", "weight_lb", "load_bear_lb"):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["stackable"] = _coerce_bool(df["stackable"])
+    df["fragile"] = _coerce_bool(df["fragile"])
+    if "this_side_up" in df.columns:
+        df["this_side_up"] = _coerce_bool(df["this_side_up"])
+
+    # Drop rows with missing critical dims
+    invalid = df[REQUIRED_MASTER_COLS].isna().any(axis=1)
+    if invalid.any():
+        warnings.append(f"Dropped {invalid.sum()} row(s) with missing required values")
+        df = df.loc[~invalid].reset_index(drop=True)
+
+    # Unit sanity check — appliances in inches: ~10-80 in. Values >200 look like mm.
+    if not df.empty:
+        median_w = df["width_in"].median()
+        if median_w > 200:
+            warnings.append(
+                f"⚠ width_in median = {median_w:.0f} — values look like MILLIMETERS, "
+                "not inches. Divide by 25.4 before uploading, or rename columns."
+            )
+
+    # Auto-compute volume_cft for rows where it's missing
+    if "volume_cft" in df.columns:
+        df["volume_cft"] = pd.to_numeric(df["volume_cft"], errors="coerce")
+        need_vol = df["volume_cft"].isna()
+        if need_vol.any():
+            df.loc[need_vol, "volume_cft"] = (
+                df.loc[need_vol, "width_in"]
+                * df.loc[need_vol, "depth_in"]
+                * df.loc[need_vol, "height_in"]
+                / 1728.0
+            ).round(2)
+            warnings.append(f"Auto-computed volume_cft for {need_vol.sum()} row(s) (= w×d×h ÷ 1728)")
+
+    return df, warnings
+
+
+def normalize_trucks_df(raw: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    df = _normalize_columns(raw)
+    warnings: list[str] = []
+    missing = [c for c in REQUIRED_TRUCK_COLS if c not in df.columns]
+    if missing:
+        raise ValueError(
+            f"Truck_Master missing required columns: {missing}. "
+            f"Found: {list(df.columns)}. Required: {REQUIRED_TRUCK_COLS}"
+        )
+    for col, default in OPTIONAL_TRUCK_COLS.items():
+        if col not in df.columns:
+            df[col] = default
+    for col in ("length_in", "width_in", "height_in", "max_payload_lb", "cargo_volume_cft"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    # Auto-compute cargo_volume_cft if missing
+    need_vol = df["cargo_volume_cft"].isna() if "cargo_volume_cft" in df.columns else None
+    if need_vol is not None and need_vol.any():
+        df.loc[need_vol, "cargo_volume_cft"] = (
+            df.loc[need_vol, "length_in"]
+            * df.loc[need_vol, "width_in"]
+            * df.loc[need_vol, "height_in"]
+            / 1728.0
+        ).round(1)
+        warnings.append(f"Auto-computed cargo_volume_cft for {need_vol.sum()} truck(s)")
+    return df, warnings
 
 
 def apply_calibrations(master_dict: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -476,15 +625,13 @@ No `load_bear` or `fragile` gating in max-fit mode (CEO 2026-05-15).
                     rows.append({
                         "Models": models_str,
                         "Qty": b["qty"],
-                        "Orient": "rotated" if b["rotated"] else "as-is",
                         "Lanes × Layers": f"{b['lanes']} × {b['layers']}",
                         "Rows": b["rows"],
                         "Length (ft)": b["length_ft"],
                     })
                 rows.append({
-                    "Models": "—",
+                    "Models": "Σ",
                     "Qty": "—",
-                    "Orient": "Σ",
                     "Lanes × Layers": "—",
                     "Rows": "—",
                     "Length (ft)": round(result["predicted_length_ft"], 2),
@@ -1212,36 +1359,114 @@ elif page == "📋 Model Master":
     st.markdown("---")
     st.markdown("### 🔄 Update master (persisted across restarts)")
     st.caption(
-        "Upload an Excel file with sheets `Model_Master` (required), "
-        "`Truck_Master` (optional), and `Loads` (optional). "
-        "Required columns in Model_Master: model_code, category, width_in, depth_in, "
-        "height_in, weight_lb, stackable, volume_cft."
+        f"**Required columns in Model_Master sheet**: `{', '.join(REQUIRED_MASTER_COLS)}`. "
+        f"Optional: `{', '.join(OPTIONAL_MASTER_COLS.keys())}`. "
+        f"Column names are case-insensitive. "
+        f"Truck_Master and Loads sheets are optional (kept from session if absent)."
     )
-    new_file = st.file_uploader("Upload new master Excel", type=["xlsx"], key="master_uploader")
+    new_file = st.file_uploader("Upload Excel", type=["xlsx"], key="master_uploader")
     if new_file:
         try:
-            new_master = pd.read_excel(new_file, sheet_name="Model_Master")
+            xls = pd.ExcelFile(new_file)
+            sheet_names = xls.sheet_names
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Cannot read Excel file: {exc}")
+            st.stop()
+
+        st.markdown(f"📑 **Found sheets**: `{', '.join(sheet_names)}`")
+
+        # Sheet pickers — auto-default to expected names if found
+        def _default_idx(target: str, options: List[str]) -> int:
+            for i, name in enumerate(options):
+                if name.strip().lower() == target.lower():
+                    return i
+            return 0
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            master_sheet = st.selectbox(
+                "Model Master sheet (required)",
+                sheet_names,
+                index=_default_idx("Model_Master", sheet_names),
+                key="master_sheet_pick",
+            )
+        with c2:
+            truck_options = ["(keep current)"] + sheet_names
+            t_default = (
+                truck_options.index("Truck_Master") if "Truck_Master" in sheet_names else 0
+            )
+            truck_sheet = st.selectbox(
+                "Truck Master sheet",
+                truck_options, index=t_default, key="truck_sheet_pick",
+            )
+        with c3:
+            loads_options = ["(keep current)"] + sheet_names
+            l_default = (
+                loads_options.index("Loads") if "Loads" in sheet_names else 0
+            )
+            loads_sheet = st.selectbox(
+                "Loads sheet",
+                loads_options, index=l_default, key="loads_sheet_pick",
+            )
+
+        # Read + normalize selected sheets
+        try:
+            raw_master = pd.read_excel(xls, sheet_name=master_sheet)
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Could not read sheet '{master_sheet}': {exc}")
+            st.stop()
+
+        try:
+            new_master, master_warns = normalize_master_df(raw_master)
+        except ValueError as exc:
+            st.error(f"⚠ {exc}")
+            with st.expander("Show first 5 rows of uploaded sheet"):
+                st.dataframe(raw_master.head(), use_container_width=True)
+            st.stop()
+
+        new_trucks = st.session_state.df_trucks
+        truck_warns: List[str] = []
+        if truck_sheet != "(keep current)":
             try:
-                new_trucks = pd.read_excel(new_file, sheet_name="Truck_Master")
-            except ValueError:
-                new_trucks = st.session_state.df_trucks
+                raw_trucks = pd.read_excel(xls, sheet_name=truck_sheet)
+                new_trucks, truck_warns = normalize_trucks_df(raw_trucks)
+            except Exception as exc:  # noqa: BLE001
+                st.warning(f"Truck_Master from '{truck_sheet}' rejected ({exc}); keeping current.")
+
+        new_loads = st.session_state.df_loads
+        if loads_sheet != "(keep current)":
             try:
-                new_loads = pd.read_excel(new_file, sheet_name="Loads")
-            except ValueError:
-                new_loads = st.session_state.df_loads
-            saved_path = save_user_master(new_master, new_trucks, new_loads)
+                new_loads = _normalize_columns(
+                    pd.read_excel(xls, sheet_name=loads_sheet)
+                )
+            except Exception as exc:  # noqa: BLE001
+                st.warning(f"Loads from '{loads_sheet}' rejected ({exc}); keeping current.")
+
+        # Preview before commit
+        st.markdown("##### ✓ Preview (clean)")
+        st.dataframe(new_master.head(10), use_container_width=True, hide_index=True)
+        st.caption(f"Total rows after normalization: **{len(new_master)}**")
+        for w in master_warns + truck_warns:
+            st.info(f"ℹ {w}")
+
+        if st.button("💾 Apply + Save to persistent master", type="primary"):
+            try:
+                saved_path = save_user_master(new_master, new_trucks, new_loads)
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"Could not save to disk: {exc}")
+                st.stop()
             st.session_state.df_master = new_master
             st.session_state.df_trucks = new_trucks
             st.session_state.df_loads = new_loads
             st.session_state.master_source = "user"
-            # Drop any cached simulations — they ran with old master
             for k in list(st.session_state.keys()):
                 if isinstance(k, str) and k.startswith("sim_"):
                     del st.session_state[k]
-            st.success(f"✅ Saved to `{saved_path}` ({len(new_master)} models). Will auto-load on next launch.")
+            st.success(
+                f"✅ Saved to `{saved_path}` — {len(new_master)} models. "
+                "Auto-loads on next launch."
+            )
             st.rerun()
-        except Exception as exc:  # noqa: BLE001
-            st.error(f"Could not load uploaded file: {exc}")
 
     col_dl, col_reset = st.columns(2)
     with col_dl:
