@@ -41,14 +41,14 @@ def fake_simulation_result():
             "remaining_length_ft": 1.82,
         },
         "placements": [
-            {"seq": 1, "model_code": "LF29H8330S", "x_mm": 0, "y_mm": 0, "z_mm": 0,
-             "dim_x_mm": 900, "dim_y_mm": 940, "dim_z_mm": 1850, "weight_kg": 155, "lane": 0, "layer": 0},
-            {"seq": 2, "model_code": "LF29H8330S", "x_mm": 0, "y_mm": 940, "z_mm": 0,
-             "dim_x_mm": 900, "dim_y_mm": 940, "dim_z_mm": 1850, "weight_kg": 155, "lane": 1, "layer": 0},
-            {"seq": 7, "model_code": "WM4000HWA", "x_mm": 2700, "y_mm": 0, "z_mm": 0,
-             "dim_x_mm": 830, "dim_y_mm": 745, "dim_z_mm": 1050, "weight_kg": 95, "lane": 0, "layer": 0},
-            {"seq": 10, "model_code": "WM4000HWA", "x_mm": 2700, "y_mm": 0, "z_mm": 1050,
-             "dim_x_mm": 830, "dim_y_mm": 745, "dim_z_mm": 1050, "weight_kg": 95, "lane": 0, "layer": 1},
+            {"seq": 1, "model_code": "LF29H8330S", "x_in": 0, "y_in": 0, "z_in": 0,
+             "dim_x_in": 900, "dim_y_in": 940, "dim_z_in": 1850, "weight_lb": 155, "lane": 0, "layer": 0},
+            {"seq": 2, "model_code": "LF29H8330S", "x_in": 0, "y_in": 940, "z_in": 0,
+             "dim_x_in": 900, "dim_y_in": 940, "dim_z_in": 1850, "weight_lb": 155, "lane": 1, "layer": 0},
+            {"seq": 7, "model_code": "WM4000HWA", "x_in": 2700, "y_in": 0, "z_in": 0,
+             "dim_x_in": 830, "dim_y_in": 745, "dim_z_in": 1050, "weight_lb": 95, "lane": 0, "layer": 0},
+            {"seq": 10, "model_code": "WM4000HWA", "x_in": 2700, "y_in": 0, "z_in": 1050,
+             "dim_x_in": 830, "dim_y_in": 745, "dim_z_in": 1050, "weight_lb": 95, "lane": 0, "layer": 1},
         ],
     }
 
