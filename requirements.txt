@@ -1,0 +1,28 @@
+# Core simulation engine
+pandas>=2.2.0
+openpyxl>=3.1.2
+py3dbp>=1.1.2
+
+# UI
+streamlit>=1.32.0
+plotly>=5.20.0
+
+# Excel/PDF generation
+xlsxwriter>=3.2.0
+reportlab>=4.1.0
+
+# Phase 1 (uncomment when ready):
+# fastapi>=0.110.0
+# uvicorn[standard]>=0.27.0
+# sqlalchemy>=2.0.27
+# psycopg2-binary>=2.9.9
+# alembic>=1.13.1
+# python-multipart>=0.0.9
+# python-jose[cryptography]>=3.3.0
+# python-saml>=1.16.0  # for SSO
+# pydantic>=2.6.0
+# pydantic-settings>=2.2.0
+
+# Dev/test
+pytest>=8.0.0
+pytest-cov>=4.1.0

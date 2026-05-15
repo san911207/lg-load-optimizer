@@ -1,0 +1,49 @@
+# =============================================================================
+# LG Load Optimizer - Local development compose
+# =============================================================================
+# Phase 0: just the Streamlit app
+# Phase 1: add postgres + nginx + auth proxy
+
+version: '3.9'
+
+services:
+
+  app:
+    build: .
+    container_name: load-optimizer-app
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data:ro
+      - ./outputs:/app/outputs
+    environment:
+      - ENV=development
+      - LOG_LEVEL=DEBUG
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Phase 1: uncomment when adding DB
+  # db:
+  #   image: postgres:16-alpine
+  #   container_name: load-optimizer-db
+  #   environment:
+  #     POSTGRES_USER: load_optimizer
+  #     POSTGRES_PASSWORD: ${DB_PASSWORD:-dev_password_change_me}
+  #     POSTGRES_DB: load_optimizer
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - db_data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U load_optimizer"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+# volumes:
+#   db_data:

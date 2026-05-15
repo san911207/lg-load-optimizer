@@ -1,0 +1,85 @@
+name: Build Windows .exe → Release → Email
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install runtime + build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build single-file exe
+        run: pyinstaller app.spec --clean --noconfirm
+
+      - name: Upload artifact (30-day fallback)
+        uses: actions/upload-artifact@v4
+        with:
+          name: LG_Load_Optimizer_Windows
+          path: dist/LG_Load_Optimizer.exe
+          if-no-files-found: error
+
+      - name: Create GitHub Release with .exe attached
+        id: release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Windows build #${{ github.run_number }}
+          body: |
+            Auto build from commit ${{ github.sha }}.
+            Download `LG_Load_Optimizer.exe` from the **Assets** below.
+          files: dist/LG_Load_Optimizer.exe
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Email download link to LG inbox
+        if: success()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          secure: false
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          from: san911207@gmail.com
+          to: sangkyu1.choi@lge.com
+          subject: "LG Load Optimizer — Windows .exe build #${{ github.run_number }}"
+          html_body: |
+            <p>안녕하세요,</p>
+            <p>LG Load Optimizer Windows .exe 새 빌드가 준비됐습니다.</p>
+
+            <p><b>다운로드:</b><br>
+            <a href="https://github.com/${{ github.repository }}/releases/download/build-${{ github.run_number }}/LG_Load_Optimizer.exe">
+              https://github.com/${{ github.repository }}/releases/download/build-${{ github.run_number }}/LG_Load_Optimizer.exe
+            </a></p>
+
+            <p>(GitHub 로그인 필요 — private repo)</p>
+
+            <h3>사용법</h3>
+            <ol>
+              <li>위 링크에서 .exe 다운로드 (LG 사내망에서 GitHub 로그인 후 클릭)</li>
+              <li>Windows PC에서 더블클릭</li>
+              <li>10~30초 cold start 대기 — 브라우저가 localhost:8501 자동 오픈</li>
+              <li>SmartScreen 경고 시: <em>More info</em> → <em>Run anyway</em></li>
+            </ol>
+
+            <p>Commit: <code>${{ github.sha }}</code></p>
+            <p>Build #: ${{ github.run_number }}</p>
