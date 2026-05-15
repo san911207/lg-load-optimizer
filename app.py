@@ -174,6 +174,12 @@ def _load_initial_data() -> tuple[pd.DataFrame, pd.DataFrame, Optional[pd.DataFr
         if p.exists():
             try:
                 df_master, df_trucks, df_loads = _load_workbook(str(p))
+                # Defensive re-normalize: an older saved master may have NaN
+                # in text columns that breaks sort/group operations downstream.
+                try:
+                    df_master, _ = normalize_master_df(df_master)
+                except Exception:
+                    pass  # if normalize rejects, surface only the raw load error
                 USER_DATA_DIR = p.parent
                 USER_MASTER_PATH = p
                 return df_master, df_trucks, df_loads, "user"
@@ -279,6 +285,12 @@ def normalize_master_df(raw: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     df["fragile"] = _coerce_bool(df["fragile"])
     if "this_side_up" in df.columns:
         df["this_side_up"] = _coerce_bool(df["this_side_up"])
+    # Ensure text columns are str so sort/group operations don't mix dtypes
+    for col in ("model_code", "category", "notes"):
+        if col in df.columns:
+            df[col] = df[col].fillna(
+                "Uncategorized" if col == "category" else ""
+            ).astype(str)
 
     # Drop rows with missing critical dims
     invalid = df[REQUIRED_MASTER_COLS].isna().any(axis=1)
@@ -1493,6 +1505,29 @@ if page == "📦 Load Plan":
 
     load_lines = grp[["model_code", "quantity"]].to_dict("records")
 
+    # Validate model codes against current master before simulating
+    requested = {l["model_code"] for l in load_lines}
+    missing_skus = sorted(requested - set(master.keys()))
+    if missing_skus:
+        st.error(
+            f"⚠ {len(missing_skus)} SKU(s) in load `{load_id}` are NOT in the current "
+            f"Model_Master — simulation aborted.\n\n"
+            f"Missing: {', '.join(missing_skus[:20])}"
+            + (" ..." if len(missing_skus) > 20 else "")
+        )
+        st.info(
+            f"Current master has **{len(master):,} SKUs** "
+            f"(source: {st.session_state.get('master_source', 'unknown')}). "
+            f"Either:\n"
+            f"- Upload a **Loads** file in the sidebar with SKUs that exist in your master, or\n"
+            f"- Add the missing SKUs to your Model_Master (Model Master page → re-upload), or\n"
+            f"- Click *Use sample data* OFF and upload your own Loads."
+        )
+        with st.expander("Sample of available SKUs in your master"):
+            sample = list(master.keys())[:30]
+            st.code("\n".join(sample))
+        st.stop()
+
     # Run both simulations (cache by load_id + signature)
     sig = (load_id, tuple(sorted((l["model_code"], l["quantity"]) for l in load_lines)))
     cache_key = f"sim_{sig}"
@@ -1531,7 +1566,10 @@ elif page == "📋 Model Master":
     st.info(src_label)
     st.markdown(f"**Total {len(df_master)} models registered**")
 
-    cats = ["All"] + sorted(df_master["category"].unique().tolist())
+    # Defensive: cast to string + drop NaN so mixed-type rows don't crash sorted()
+    cats = ["All"] + sorted(
+        {str(c) for c in df_master["category"].dropna().unique() if str(c).strip()}
+    )
     sel_cat = st.selectbox("Category filter", cats)
     df_view = df_master if sel_cat == "All" else df_master[df_master["category"] == sel_cat]
     st.dataframe(df_view, use_container_width=True, hide_index=True)
@@ -1651,9 +1689,14 @@ elif page == "📋 Model Master":
             )
 
         if st.button("💾 Apply + Save to persistent master", type="primary"):
+            # Persist Loads only if user explicitly picked a sheet — otherwise keep
+            # Loads as a transient per-session value (sidebar upload). Avoids
+            # saving stale bundled-sample Loads whose SKUs may not exist in the
+            # custom master.
+            loads_to_save = new_loads if loads_sheet != "(keep current)" else None
             try:
                 saved_path = save_user_master(
-                    new_master, new_trucks, new_loads, override_dir=save_dir
+                    new_master, new_trucks, loads_to_save, override_dir=save_dir
                 )
             except Exception as exc:  # noqa: BLE001
                 st.error(
@@ -1663,6 +1706,19 @@ elif page == "📋 Model Master":
                     "Try a different folder above and click Apply again."
                 )
                 st.stop()
+            # If applying a new master invalidates the currently loaded Loads,
+            # drop them from session so user has to upload a compatible Loads file.
+            current_loads = st.session_state.get("df_loads")
+            if current_loads is not None and "model_code" in current_loads.columns:
+                load_skus = set(current_loads["model_code"].astype(str))
+                master_skus = set(new_master["model_code"].astype(str))
+                if load_skus and not load_skus.issubset(master_skus):
+                    new_loads = None
+                    st.warning(
+                        f"⚠ Existing Loads referenced "
+                        f"{len(load_skus - master_skus)} SKU(s) not in your new master "
+                        "— Loads cleared. Upload a fresh Loads file in the sidebar."
+                    )
             st.session_state.df_master = new_master
             st.session_state.df_trucks = new_trucks
             st.session_state.df_loads = new_loads
