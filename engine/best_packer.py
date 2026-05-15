@@ -211,19 +211,22 @@ def _supported_from_below(
     x: float, y: float, z: float, d: float, w: float,
     placed: List[Placement],
 ) -> bool:
-    """True if a box at (x, y, z) with footprint d×w has support directly below.
-
-    Support = at least one placed box whose top face is at z and whose footprint
-    intersects the new box's footprint. (Simple check: any overlap is enough;
-    full-footprint support is not required to keep solutions feasible.)
+    """Strict support — the new box's entire footprint must rest on ONE box
+    whose top face is at z. No overhang allowed (would look like the box is
+    floating + would be physically unsafe to load).
     """
+    if z <= EPS:
+        return True  # floor
+    x1, y1 = x + d, y + w
     for p in placed:
-        # Top face of p at exactly z?
+        # Top face at exactly this z?
         if abs((p.z + p.dim_z) - z) > EPS:
             continue
-        # x-y footprint overlap?
-        if (x + EPS < p.x + p.dim_x and x + d - EPS > p.x and
-            y + EPS < p.y + p.dim_y and y + w - EPS > p.y):
+        # Supporter must FULLY contain the new box's footprint
+        if (p.x <= x + EPS and
+            p.x + p.dim_x >= x1 - EPS and
+            p.y <= y + EPS and
+            p.y + p.dim_y >= y1 - EPS):
             return True
     return False
 

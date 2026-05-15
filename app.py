@@ -76,24 +76,48 @@ DEFAULT_MASTER = APP_DIR / "data" / "sample_input.xlsx"
 OUT_DIR = APP_DIR / "outputs"
 OUT_DIR.mkdir(exist_ok=True)
 
-# Per-user persistent data dir (so .exe users keep their custom master across
-# restarts without re-uploading). Tries Documents first, falls back if locale
-# rename or permissions blocks it.
-def _resolve_user_data_dir() -> Path:
-    candidates = [
+# Per-user persistent data dir. Corp Windows often locks `Documents`, so we
+# probe several locations and pick the first writable one. Non-system drives
+# (E:, D:) are tried first because they are usually exempt from IT lockdown.
+def _candidate_data_dirs(extra: Optional[Path] = None) -> List[Path]:
+    cands: List[Path] = []
+    if extra is not None:
+        cands.append(extra)
+    # Windows non-system drives (typical corp scratch / project drives)
+    for drive_letter in ("E", "D", "F", "G"):
+        drive_root = Path(f"{drive_letter}:/")
+        if drive_root.exists():
+            cands.append(drive_root / "LG_Load_Optimizer")
+    cands.extend([
         Path.home() / "Documents" / "LG_Load_Optimizer",
         Path.home() / "LG_Load_Optimizer",
-    ]
-    for d in candidates:
-        try:
-            d.mkdir(parents=True, exist_ok=True)
-            probe = d / ".write_probe"
-            probe.write_text("ok")
-            probe.unlink()
+    ])
+    # De-dupe preserving order
+    seen, deduped = set(), []
+    for c in cands:
+        key = str(c).lower()
+        if key not in seen:
+            seen.add(key)
+            deduped.append(c)
+    return deduped
+
+
+def _writable(d: Path) -> bool:
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        probe = d / ".write_probe"
+        probe.write_text("ok")
+        probe.unlink()
+        return True
+    except Exception:
+        return False
+
+
+def _resolve_user_data_dir(override: Optional[Path] = None) -> Path:
+    for d in _candidate_data_dirs(extra=override):
+        if _writable(d):
             return d
-        except Exception:
-            continue
-    return candidates[-1]
+    return _candidate_data_dirs()[-1]
 
 
 USER_DATA_DIR = _resolve_user_data_dir()
@@ -131,13 +155,30 @@ def _load_workbook(path: str):
 
 
 def _load_initial_data() -> tuple[pd.DataFrame, pd.DataFrame, Optional[pd.DataFrame], str]:
-    """Prefer the user-saved master, fall back to bundled sample."""
-    if USER_MASTER_PATH.exists():
+    """Prefer a user-saved master if present at any known location."""
+    global USER_DATA_DIR, USER_MASTER_PATH
+
+    # Pointer file lets us recover a custom save path from previous session
+    candidate_paths: List[Path] = []
+    pointer = Path.home() / ".lg_load_optimizer_path"
+    if pointer.exists():
         try:
-            df_master, df_trucks, df_loads = _load_workbook(str(USER_MASTER_PATH))
-            return df_master, df_trucks, df_loads, "user"
+            candidate_paths.append(Path(pointer.read_text().strip()))
         except Exception:
-            pass  # corrupted user file → fall back
+            pass
+    candidate_paths.append(USER_MASTER_PATH)
+    for d in _candidate_data_dirs():
+        candidate_paths.append(d / "master.xlsx")
+
+    for p in candidate_paths:
+        if p.exists():
+            try:
+                df_master, df_trucks, df_loads = _load_workbook(str(p))
+                USER_DATA_DIR = p.parent
+                USER_MASTER_PATH = p
+                return df_master, df_trucks, df_loads, "user"
+            except Exception:
+                continue
     df_master, df_trucks, df_loads = _load_workbook(str(DEFAULT_MASTER))
     return df_master, df_trucks, df_loads, "bundled"
 
@@ -146,17 +187,42 @@ def save_user_master(
     df_master: pd.DataFrame,
     df_trucks: Optional[pd.DataFrame] = None,
     df_loads: Optional[pd.DataFrame] = None,
+    override_dir: Optional[Path] = None,
 ) -> Path:
-    """Persist current master to user data dir so it auto-loads next launch."""
-    USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with pd.ExcelWriter(USER_MASTER_PATH, engine="openpyxl") as w:
-        df_master.to_excel(w, sheet_name="Model_Master", index=False)
-        if df_trucks is not None:
-            df_trucks.to_excel(w, sheet_name="Truck_Master", index=False)
-        if df_loads is not None:
-            df_loads.to_excel(w, sheet_name="Loads", index=False)
-    _load_workbook.clear()
-    return USER_MASTER_PATH
+    """Persist current master to a writable location.
+    Tries (in order): user-supplied override → non-system drives → Documents → home.
+    Returns the path actually written.
+    """
+    last_err: Optional[Exception] = None
+    for d in _candidate_data_dirs(extra=override_dir):
+        target = d / "master.xlsx"
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            with pd.ExcelWriter(target, engine="openpyxl") as w:
+                df_master.to_excel(w, sheet_name="Model_Master", index=False)
+                if df_trucks is not None:
+                    df_trucks.to_excel(w, sheet_name="Truck_Master", index=False)
+                if df_loads is not None:
+                    df_loads.to_excel(w, sheet_name="Loads", index=False)
+            _load_workbook.clear()
+            # Remember the resolved path for the rest of this session + next launch
+            global USER_DATA_DIR, USER_MASTER_PATH
+            USER_DATA_DIR = d
+            USER_MASTER_PATH = target
+            # Also write a pointer file so next launch can find non-default paths
+            try:
+                pointer = Path.home() / ".lg_load_optimizer_path"
+                pointer.write_text(str(target))
+            except Exception:
+                pass
+            return target
+        except Exception as exc:  # noqa: BLE001
+            last_err = exc
+            continue
+    raise IOError(
+        f"All candidate save paths failed (last: {last_err}). "
+        f"Tried: {[str(d) for d in _candidate_data_dirs(extra=override_dir)]}"
+    )
 
 
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -834,9 +900,9 @@ def build_3d_figure(
     fig = go.Figure(data=traces)
     fig.update_layout(
         scene=dict(
-            xaxis=dict(title="Length (mm) · Cab → Dock", showbackground=False),
-            yaxis=dict(title="Width", showbackground=False),
-            zaxis=dict(title="Height", showbackground=False),
+            xaxis=dict(title="Length (in) · Cab → Dock", showbackground=False),
+            yaxis=dict(title="Width (in)", showbackground=False),
+            zaxis=dict(title="Height (in)", showbackground=False),
             aspectmode="data",
             camera=dict(eye=dict(x=1.6, y=-2.0, z=1.1)),
         ),
@@ -1449,11 +1515,39 @@ elif page == "📋 Model Master":
         for w in master_warns + truck_warns:
             st.info(f"ℹ {w}")
 
+        # Save location selector — auto-detects writable drives, with override
+        st.markdown("##### 💾 Save location")
+        default_dir = _resolve_user_data_dir()
+        save_dir_str = st.text_input(
+            "Folder (will create if missing):",
+            value=str(default_dir),
+            help=(
+                "Default tries E:/ → D:/ → Documents → home. "
+                "Override to any writable folder (e.g. E:/LG_Load_Optimizer)."
+            ),
+            key="save_dir_input",
+        )
+        save_dir = Path(save_dir_str)
+        if _writable(save_dir):
+            st.caption(f"✓ Writable: `{save_dir}`")
+        else:
+            st.warning(
+                f"⚠ Cannot write to `{save_dir}`. "
+                "Will auto-fall back to next writable candidate on save."
+            )
+
         if st.button("💾 Apply + Save to persistent master", type="primary"):
             try:
-                saved_path = save_user_master(new_master, new_trucks, new_loads)
+                saved_path = save_user_master(
+                    new_master, new_trucks, new_loads, override_dir=save_dir
+                )
             except Exception as exc:  # noqa: BLE001
-                st.error(f"Could not save to disk: {exc}")
+                st.error(
+                    f"❌ Could not save anywhere. Last error: {exc}\n\n"
+                    f"Tried: {[str(d) for d in _candidate_data_dirs(extra=save_dir)]}\n\n"
+                    "Data NOT lost — your upload is still in this session. "
+                    "Try a different folder above and click Apply again."
+                )
                 st.stop()
             st.session_state.df_master = new_master
             st.session_state.df_trucks = new_trucks
