@@ -47,11 +47,10 @@ CAT_COLORS: Dict[str, Dict[str, str]] = {
 
 # ─────────────────────────────────────────────────────────────────────────
 # Unit conversions (display layer only)
+# Master data is now in US units (in / lb / cft). Display sometimes needs ft.
 # ─────────────────────────────────────────────────────────────────────────
-def mm_to_in(v: float) -> float: return v / 25.4
-def mm_to_ft(v: float) -> float: return v / 304.8
-def kg_to_lb(v: float) -> float: return v * 2.20462
-def mm3_to_ft3(v: float) -> float: return v / 28_316_846.6
+def in_to_ft(v: float) -> float: return v / 12.0
+def cuin_to_cft(v: float) -> float: return v / 1728.0
 
 
 def broad_category(cat: str) -> str:
@@ -92,9 +91,9 @@ def _load_workbook(path: str):
 def apply_calibrations(master_dict: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """CLAUDE.md: required calibrations so all 36 units fit in 26ft sample."""
     if "LDFN4542S" in master_dict:
-        master_dict["LDFN4542S"].update({"stackable": True, "load_bear_kg": 60, "fragile": False})
+        master_dict["LDFN4542S"].update({"stackable": True, "load_bear_lb": 132.3, "fragile": False})
     if "LWS3063ST" in master_dict:
-        master_dict["LWS3063ST"].update({"stackable": True, "load_bear_kg": 90, "fragile": False})
+        master_dict["LWS3063ST"].update({"stackable": True, "load_bear_lb": 198.4, "fragile": False})
     return master_dict
 
 
@@ -124,12 +123,12 @@ if "df_master" not in st.session_state:
 # Step 1 helpers
 # =========================================================================
 def compute_loaded_volume_ft3(sim_result: Dict[str, Any]) -> float:
-    """Sum of placed-box volumes in ft³."""
-    total_mm3 = sum(
-        p["dim_x_mm"] * p["dim_y_mm"] * p["dim_z_mm"]
+    """Sum of placed-box volumes in ft³ (placement dims are in inches)."""
+    total_cuin = sum(
+        p["dim_x_in"] * p["dim_y_in"] * p["dim_z_in"]
         for p in sim_result["placements"]
     )
-    return mm3_to_ft3(total_mm3)
+    return cuin_to_cft(total_cuin)
 
 
 def pick_recommended(sim_26: Dict[str, Any], sim_53: Dict[str, Any]) -> Optional[str]:
@@ -148,20 +147,21 @@ def build_load_composition_df(
     for line in load_lines:
         mc = line["model_code"]
         m = master[mc]
-        unit_vol_mm3 = m["width_mm"] * m["depth_mm"] * m["height_mm"]
-        unit_vol_ft3 = mm3_to_ft3(unit_vol_mm3)
+        unit_vol_ft3 = m.get("volume_cft") or cuin_to_cft(
+            m["width_in"] * m["depth_in"] * m["height_in"]
+        )
         rows.append({
             "Model": mc,
             "Category": m["category"],
             "Qty": line["quantity"],
             "Dim W × D × H (in)": (
-                f"{mm_to_in(m['width_mm']):.1f} × "
-                f"{mm_to_in(m['depth_mm']):.1f} × "
-                f"{mm_to_in(m['height_mm']):.1f}"
+                f"{m['width_in']:.1f} × "
+                f"{m['depth_in']:.1f} × "
+                f"{m['height_in']:.1f}"
             ),
             "Unit vol (ft³)": round(unit_vol_ft3, 1),
             "Total vol (ft³)": round(unit_vol_ft3 * line["quantity"], 0),
-            "Weight (lb)": round(kg_to_lb(m["weight_kg"]) * line["quantity"], 0),
+            "Weight (lb)": round(m["weight_lb"] * line["quantity"], 0),
         })
     return pd.DataFrame(rows)
 
@@ -210,9 +210,9 @@ def render_truck_card(
 ) -> None:
     label = "26ft Box Truck" if truck_key == "26ft" else "53ft Dry Van"
     dims_ft = (
-        f"{mm_to_ft(truck_spec['length_mm']):.0f} × "
-        f"{mm_to_ft(truck_spec['width_mm']):.1f} × "
-        f"{mm_to_ft(truck_spec['height_mm']):.1f} ft"
+        f"{in_to_ft(truck_spec['length_in']):.0f} × "
+        f"{in_to_ft(truck_spec['width_in']):.1f} × "
+        f"{in_to_ft(truck_spec['height_in']):.1f} ft"
     )
 
     if sim["fits"]:
@@ -468,12 +468,15 @@ def render_step1(
     destination: Optional[str],
 ) -> None:
     total_qty = sum(l["quantity"] for l in load_lines)
-    total_weight_kg = sum(master[l["model_code"]]["weight_kg"] * l["quantity"] for l in load_lines)
-    total_vol_mm3 = sum(
-        master[l["model_code"]]["width_mm"]
-        * master[l["model_code"]]["depth_mm"]
-        * master[l["model_code"]]["height_mm"]
-        * l["quantity"]
+    total_weight_lb = sum(
+        master[l["model_code"]]["weight_lb"] * l["quantity"] for l in load_lines
+    )
+    total_vol_cft = sum(
+        (master[l["model_code"]].get("volume_cft") or cuin_to_cft(
+            master[l["model_code"]]["width_in"]
+            * master[l["model_code"]]["depth_in"]
+            * master[l["model_code"]]["height_in"]
+        )) * l["quantity"]
         for l in load_lines
     )
 
@@ -483,8 +486,8 @@ def render_step1(
         parts.append(destination)
     parts += [
         f"{total_qty} units",
-        f"{kg_to_lb(total_weight_kg):,.0f} lb",
-        f"{mm3_to_ft3(total_vol_mm3):,.0f} ft³",
+        f"{total_weight_lb:,.0f} lb",
+        f"{total_vol_cft:,.0f} ft³",
     ]
     st.caption(" · ".join(parts))
 
@@ -524,8 +527,8 @@ def render_step1(
 # =========================================================================
 # Step 2-A helpers (3D rendering)
 # =========================================================================
-DOOR_TRACK_LOSS_MM = 250    # CLAUDE.md: 10" headroom loss on roll-up doors
-DOOR_TRACK_LENGTH_MM = 1524 # 5 ft
+DOOR_TRACK_LOSS_IN = 10     # 10" headroom loss on roll-up doors (rear)
+DOOR_TRACK_LENGTH_IN = 60   # 5 ft × 12 in
 
 CATEGORY_ICONS = {
     "refrigerator": "R", "washer": "W", "dryer": "D",
@@ -596,9 +599,9 @@ def _box_edges(
 def build_3d_figure(
     sim: Dict[str, Any], truck_spec: Dict[str, Any], master: Dict[str, Dict[str, Any]]
 ) -> go.Figure:
-    L = truck_spec["length_mm"]
-    W = truck_spec["width_mm"]
-    H = truck_spec["height_mm"]
+    L = truck_spec["length_in"]
+    W = truck_spec["width_in"]
+    H = truck_spec["height_in"]
 
     traces: List[Any] = []
 
@@ -611,33 +614,33 @@ def build_3d_figure(
         palette = CAT_COLORS.get(cat, CAT_COLORS["other"])
         hover = (
             f"#{p['seq']} · {p['model_code']}<br>"
-            f"x={p['x_mm']/304.8:.1f} ft · lane {p['lane']} · "
-            f"layer {p['layer']}<br>{p['weight_kg']:.0f} kg "
-            f"({p['weight_kg']*2.20462:.0f} lb)"
+            f"x={p['x_in']/12.0:.1f} ft · lane {p['lane']} · "
+            f"layer {p['layer']}<br>{p['weight_lb']:.0f} kg "
+            f"({p['weight_lb']:.0f} lb)"
         )
         traces.append(_box_mesh(
-            p["x_mm"], p["y_mm"], p["z_mm"],
-            p["dim_x_mm"], p["dim_y_mm"], p["dim_z_mm"],
+            p["x_in"], p["y_in"], p["z_in"],
+            p["dim_x_in"], p["dim_y_in"], p["dim_z_in"],
             color=palette["front"], opacity=0.92, hovertext=hover,
         ))
         traces.append(_box_edges(
-            p["x_mm"], p["y_mm"], p["z_mm"],
-            p["dim_x_mm"], p["dim_y_mm"], p["dim_z_mm"],
+            p["x_in"], p["y_in"], p["z_in"],
+            p["dim_x_in"], p["dim_y_in"], p["dim_z_in"],
             color=palette["stroke"], width=1.2,
         ))
 
     # Door track (rear 5 ft × top 10") — CLAUDE.md §Critical real-world constraints
-    door_x = L - DOOR_TRACK_LENGTH_MM
-    door_z = H - DOOR_TRACK_LOSS_MM
+    door_x = L - DOOR_TRACK_LENGTH_IN
+    door_z = H - DOOR_TRACK_LOSS_IN
     if door_x >= 0 and door_z >= 0:
         traces.append(_box_mesh(
             door_x, 0, door_z,
-            DOOR_TRACK_LENGTH_MM, W, DOOR_TRACK_LOSS_MM,
+            DOOR_TRACK_LENGTH_IN, W, DOOR_TRACK_LOSS_IN,
             color="#DC2626", opacity=0.22, hovertext="Door track (keep clear)",
         ))
 
     # Free space outline after last box
-    x_used = sim["metrics"]["x_used_mm"]
+    x_used = sim["metrics"]["x_used_in"]
     if L - x_used > 100:
         traces.append(_box_edges(
             x_used, 0, 0, L - x_used, W, H,
@@ -669,9 +672,9 @@ def _group_zones(sim: Dict[str, Any]) -> List[List[Dict[str, Any]]]:
     """
     groups: Dict[Tuple[int, int, int], List[Dict[str, Any]]] = {}
     for p in sim["placements"]:
-        key = (p["dim_y_mm"], p["dim_x_mm"], p["dim_z_mm"])
+        key = (p["dim_y_in"], p["dim_x_in"], p["dim_z_in"])
         groups.setdefault(key, []).append(p)
-    return sorted(groups.values(), key=lambda ps: min(p["x_mm"] for p in ps))
+    return sorted(groups.values(), key=lambda ps: min(p["x_in"] for p in ps))
 
 
 def _zone_category_label(ps: List[Dict[str, Any]], master: Dict[str, Dict[str, Any]]) -> str:
@@ -696,10 +699,10 @@ def build_zone_breakdown_df(
             model_str = model_str[:26] + "…"
         lanes = len({p["lane"] for p in ps})
         layers = len({p["layer"] for p in ps})
-        rows_count = len({p["x_mm"] for p in ps})
-        x_start_ft = min(p["x_mm"] for p in ps) / 304.8
-        x_end_ft = max(p["x_mm"] + p["dim_x_mm"] for p in ps) / 304.8
-        weight_lb = sum(p["weight_kg"] * 2.20462 for p in ps)
+        rows_count = len({p["x_in"] for p in ps})
+        x_start_ft = min(p["x_in"] for p in ps) / 12.0
+        x_end_ft = max(p["x_in"] + p["dim_x_in"] for p in ps) / 12.0
+        weight_lb = sum(p["weight_lb"] for p in ps)
         rows.append({
             "Zone": zone_letters[idx] if idx < len(zone_letters) else f"Z{idx}",
             "Category": _zone_category_label(ps, master),
@@ -773,11 +776,10 @@ def build_simple_excel(
             "Model_Code": p["model_code"],
             "Category": spec.get("category", ""),
             "Lane": p["lane"], "Layer": p["layer"],
-            "Pos_X_ft": round(p["x_mm"] / 304.8, 2),
-            "Pos_X_mm": p["x_mm"], "Pos_Y_mm": p["y_mm"], "Pos_Z_mm": p["z_mm"],
-            "Dim_X_mm": p["dim_x_mm"], "Dim_Y_mm": p["dim_y_mm"], "Dim_Z_mm": p["dim_z_mm"],
-            "Weight_kg": round(p["weight_kg"], 1),
-            "Weight_lb": round(p["weight_kg"] * 2.20462, 1),
+            "Pos_X_ft": round(p["x_in"] / 12.0, 2),
+            "Pos_X_in": p["x_in"], "Pos_Y_in": p["y_in"], "Pos_Z_in": p["z_in"],
+            "Dim_X_in": p["dim_x_in"], "Dim_Y_in": p["dim_y_in"], "Dim_Z_in": p["dim_z_in"],
+            "Weight_lb": round(p["weight_lb"], 1),
         })
     placements_df = pd.DataFrame(place_rows)
 
@@ -998,8 +1000,8 @@ def _make_side_view(
     master: Dict[str, Dict[str, Any]],
 ) -> go.Figure:
     """Side-view (X-Z plane) for one loading step."""
-    L = truck_spec["length_mm"]
-    H = truck_spec["height_mm"]
+    L = truck_spec["length_in"]
+    H = truck_spec["height_in"]
 
     fig = go.Figure()
     # Truck outer outline
@@ -1011,7 +1013,7 @@ def _make_side_view(
     # Door track (red wash)
     fig.add_shape(
         type="rect",
-        x0=L - DOOR_TRACK_LENGTH_MM, y0=H - DOOR_TRACK_LOSS_MM,
+        x0=L - DOOR_TRACK_LENGTH_IN, y0=H - DOOR_TRACK_LOSS_IN,
         x1=L, y1=H,
         line=dict(width=0),
         fillcolor="rgba(220,38,38,0.18)", layer="below",
@@ -1019,9 +1021,9 @@ def _make_side_view(
 
     for zi, ps in enumerate(zones):
         if zi > step_idx:
-            xmin = min(p["x_mm"] for p in ps)
-            xmax = max(p["x_mm"] + p["dim_x_mm"] for p in ps)
-            zmax = max(p["z_mm"] + p["dim_z_mm"] for p in ps)
+            xmin = min(p["x_in"] for p in ps)
+            xmax = max(p["x_in"] + p["dim_x_in"] for p in ps)
+            zmax = max(p["z_in"] + p["dim_z_in"] for p in ps)
             fig.add_shape(
                 type="rect", x0=xmin, y0=0, x1=xmax, y1=zmax,
                 line=dict(color="#9CA3AF", width=1, dash="dash"),
@@ -1037,8 +1039,8 @@ def _make_side_view(
             r, g, b = _hex_to_rgb(c["front"])
             fig.add_shape(
                 type="rect",
-                x0=p["x_mm"], y0=p["z_mm"],
-                x1=p["x_mm"] + p["dim_x_mm"], y1=p["z_mm"] + p["dim_z_mm"],
+                x0=p["x_in"], y0=p["z_in"],
+                x1=p["x_in"] + p["dim_x_in"], y1=p["z_in"] + p["dim_z_in"],
                 line=dict(color=c["stroke"], width=stroke_w),
                 fillcolor=f"rgba({r},{g},{b},{alpha})",
             )
@@ -1071,8 +1073,8 @@ def _step_tip(ps: List[Dict[str, Any]], master: Dict[str, Dict[str, Any]]) -> st
 
 
 def _step_range_label(ps: List[Dict[str, Any]]) -> str:
-    xmin = min(p["x_mm"] for p in ps) / 304.8
-    xmax = max(p["x_mm"] + p["dim_x_mm"] for p in ps) / 304.8
+    xmin = min(p["x_in"] for p in ps) / 12.0
+    xmax = max(p["x_in"] + p["dim_x_in"] for p in ps) / 12.0
     return f"{xmin:.1f} → {xmax:.1f} ft"
 
 

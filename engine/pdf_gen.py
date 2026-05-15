@@ -71,9 +71,9 @@ def generate_work_order(
     for model, ps in zones.items():
         lanes = len(set(p["lane"] for p in ps))
         layers = len(set(p["layer"] for p in ps))
-        rows = len(set(p["x_mm"] for p in ps))
-        x_start = min(p["x_mm"] for p in ps) / 304.8
-        x_end = max(p["x_mm"] + p["dim_x_mm"] for p in ps) / 304.8
+        rows = len(set(p["x_in"] for p in ps))
+        x_start = min(p["x_in"] for p in ps) / 12.0
+        x_end = max(p["x_in"] + p["dim_x_in"] for p in ps) / 12.0
         data.append([
             str(step_num),
             model,

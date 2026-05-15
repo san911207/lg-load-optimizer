@@ -121,7 +121,7 @@ def render_html_email(load_id: str, result: Dict[str, Any], truck_type: str = "2
 
     zone_rows = ""
     for model, ps in by_model.items():
-        rows = len(set(p["x_mm"] for p in ps))
+        rows = len(set(p["x_in"] for p in ps))
         lanes = len(set(p["lane"] for p in ps))
         layers = len(set(p["layer"] for p in ps))
         zone_rows += f"""
