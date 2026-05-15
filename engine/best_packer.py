@@ -3,33 +3,40 @@
 Best-Pack Engine — LG Appliance Truck Loading Optimizer
 =============================================================================
 
-Pair-packing algorithm with auto-strategy selection.
+3D Bin-Packing with FIXED orientation (industry standard for appliances/TVs).
 
-Units (US, post-2026-05-15 refactor):
+Units (US):
   - All linear dims in inches (in)
   - Weight in pounds (lb)
   - Volume in cubic feet (cft)
-  - Door track loss = 10 inches at top of rear
+  - Door track loss = 10 inches at top of rear (last 5 ft)
 
-Key features:
-  - Groups same-dim models together (e.g. washer + dryer paired)
-  - Forces max lane utilization (truck_width // box_width)
-  - Handles upright-only constraint (this side up)
-  - Tries both horizontal orientations (w↔d) — picks shortest length
-  - Multiple sort strategies, auto-picks best (max units fitted, min length)
-  - Max-fit mode: only `stackable` flag gates tier stacking;
-    `load_bear_lb` and `fragile` are ignored (CEO decision 2026-05-15).
+Constraints:
+  - Upright only (height vertical, z fixed)
+  - **No horizontal rotation** — width and depth fixed per manufacturer spec
+  - Stackable=False → item must be at z=0 (floor only)
+  - Stackable=True → item can sit on top of any other placed box
+  - Max-fit mode: load_bear_lb and fragile are ignored (CEO 2026-05-15)
 
-Author: Sangkyu / LG Electronics US SCM
+Algorithm: Extreme-Point Heuristic
+  - All items expanded individually
+  - Tried under multiple sort orders, best result selected
+  - For each item, candidate positions = extreme points (corners of placed
+    boxes + origin). Pick the candidate that minimizes max-x (length used),
+    breaking ties by lowest z then lowest y (ground-first, compact).
+  - Stackable=False items skipped from z>0 candidates.
+  - Boxes naturally stack across dim groups (microwave on top of fridge etc.)
+    and last-row slots backfill from later items.
 """
 
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass, field
 
 
-DOOR_TRACK_LOSS_IN = 10  # Roll-up door track at top of rear (~5ft × 10in)
+DOOR_TRACK_LOSS_IN = 10     # 10" headroom loss at rear
 IN_PER_FT = 12.0
-CUIN_PER_CFT = 1728.0  # 12³
+CUIN_PER_CFT = 1728.0
+EPS = 1e-6                  # float tolerance for collision/bounds
 
 
 @dataclass
@@ -37,20 +44,19 @@ class Placement:
     """Single box placement in the truck (all dims in inches, weight in lb)."""
     seq: int
     model_code: str
-    x: float          # length-wise position (in, from cab)
-    y: float          # width-wise position (in)
-    z: float          # height position (in)
-    dim_x: float      # depth along truck length (in)
-    dim_y: float      # width along truck width (in)
-    dim_z: float      # height (in)
+    x: float          # length-wise (in, from cab)
+    y: float          # width-wise (in)
+    z: float          # vertical (in)
+    dim_x: float      # depth along truck length
+    dim_y: float      # width along truck width
+    dim_z: float      # height
     weight_lb: float
-    lane: int         # 0-indexed lane number
-    layer: int        # 0=floor, 1=stacked, ...
+    lane: int         # approx lane index = floor(y / dim_y)
+    layer: int        # approx layer index = floor(z / dim_z)
 
 
 @dataclass
 class PackResult:
-    """Result of a single packing strategy."""
     strategy: str
     placements: List[Placement]
     unfitted: List[Dict[str, Any]] = field(default_factory=list)
@@ -73,14 +79,13 @@ class PackResult:
 
     def metrics(self, truck_spec: Dict[str, Any]) -> Dict[str, Any]:
         used_vol_cuin = sum(p.dim_x * p.dim_y * p.dim_z for p in self.placements)
+        used_vol_cft = used_vol_cuin / CUIN_PER_CFT
         truck_vol_cuin = (
             truck_spec["length_in"] * truck_spec["width_in"] * truck_spec["height_in"]
         )
         truck_cargo_cft = truck_spec.get(
             "cargo_volume_cft", truck_vol_cuin / CUIN_PER_CFT
         )
-        used_vol_cft = used_vol_cuin / CUIN_PER_CFT
-
         return {
             "strategy": self.strategy,
             "fitted_count": self.fitted_count,
@@ -101,157 +106,145 @@ class PackResult:
         }
 
 
-def _pick_best_orientation(
-    w: float, d: float, h: float, total_qty: int,
-    can_stack: bool, truck_width: float, truck_height_effective: float,
-) -> Tuple[float, float, int, int]:
-    """
-    Choose horizontal orientation (w↔d) and tier count that minimizes total
-    length used. Vertical axis (h) is fixed — appliances stay upright.
-
-    Returns (orient_w, orient_d, layers, n_lanes).
-    """
-    layers_max = max(1, int(truck_height_effective // h)) if can_stack else 1
-
-    candidates = []
-    for orient_w, orient_d in ((w, d), (d, w)):
-        n_lanes = max(1, int(truck_width // orient_w))
-        per_row = n_lanes * layers_max
-        rows = -(-total_qty // per_row)  # ceil
-        total_length = rows * orient_d
-        candidates.append(
-            (total_length, -per_row, orient_w, orient_d, layers_max, n_lanes)
-        )
-
-    candidates.sort()
-    _, _, ow, od, layers, n_lanes = candidates[0]
-    return ow, od, layers, n_lanes
+# ─────────────────────────────────────────────────────────────────────────
+# Extreme-Point Heuristic
+# ─────────────────────────────────────────────────────────────────────────
+def _collides(x: float, y: float, z: float, dx: float, dy: float, dz: float,
+              placed: List[Placement]) -> bool:
+    x1, y1, z1 = x + dx, y + dy, z + dz
+    for p in placed:
+        if (x + EPS < p.x + p.dim_x and x1 - EPS > p.x and
+            y + EPS < p.y + p.dim_y and y1 - EPS > p.y and
+            z + EPS < p.z + p.dim_z and z1 - EPS > p.z):
+            return True
+    return False
 
 
-def _lane_pack_group(
-    group_items: List[Tuple[str, int]],
-    group_spec: Dict[str, Any],
-    master: Dict[str, Dict[str, Any]],
-    x_start: float,
-    truck_width: float,
-    truck_height_effective: float,
-) -> Tuple[List[Placement], float]:
-    """
-    Pack a group of items sharing the same dimensions.
-    Max-fit mode: stacks as many tiers as fit in effective height.
-    Only `stackable` flag gates tier stacking. Tries both horizontal
-    orientations (w↔d) and picks shortest total length.
-    """
-    w = group_spec["width_in"]
-    d = group_spec["depth_in"]
-    h = group_spec["height_in"]
-    can_stack = group_spec.get("stackable", False)
-
-    total_qty = sum(qty for _, qty in group_items)
-    w, d, layers, n_lanes = _pick_best_orientation(
-        w, d, h, total_qty, can_stack, truck_width, truck_height_effective
-    )
-
-    queue: List[str] = []
-    for mc, qty in group_items:
-        queue.extend([mc] * qty)
-
-    placements: List[Placement] = []
-    x = x_start
-    i_in_row = 0
-
-    while queue:
-        if i_in_row >= n_lanes * layers:
-            x += d
-            i_in_row = 0
-        mc = queue.pop(0)
-        lane = i_in_row % n_lanes
-        layer = i_in_row // n_lanes
-        placements.append(Placement(
-            seq=0,
-            model_code=mc,
-            x=x, y=lane * w, z=layer * h,
-            dim_x=d, dim_y=w, dim_z=h,
-            weight_lb=master[mc]["weight_lb"],
-            lane=lane, layer=layer,
-        ))
-        i_in_row += 1
-
-    next_x = x + d
-    return placements, next_x
-
-
-def _find_dim_groups(
-    order_lines: List[Dict[str, Any]], master: Dict[str, Dict[str, Any]]
-):
-    """Group order lines by shared dimensions (e.g. washer + dryer)."""
-    groups: Dict[Tuple[float, float, float], Dict[str, Any]] = {}
-    for ol in order_lines:
-        spec = master[ol["model_code"]]
-        key = (spec["width_in"], spec["depth_in"], spec["height_in"])
-        if key not in groups:
-            groups[key] = {"spec": spec, "items": [], "total_qty": 0, "total_weight": 0.0}
-        groups[key]["items"].append((ol["model_code"], ol["quantity"]))
-        groups[key]["total_qty"] += ol["quantity"]
-        groups[key]["total_weight"] += spec["weight_lb"] * ol["quantity"]
-    return list(groups.values())
-
-
-def pair_pack(
-    order_lines: List[Dict[str, Any]],
-    master: Dict[str, Dict[str, Any]],
-    truck_spec: Dict[str, Any],
-    sort_strategy: str = "height_desc",
+def _pack_with_strategy(
+    items: List[Dict[str, Any]],
+    L: float, W: float, H: float,
+    strategy_name: str,
 ) -> PackResult:
-    """
-    Pair-packing strategy: group same-dim models, sort, pack with max lanes.
+    placements: List[Placement] = []
+    unfitted_by_model: Dict[str, int] = {}
+    extreme_points: List[Tuple[float, float, float]] = [(0.0, 0.0, 0.0)]
 
-    sort_strategy options:
-      - "height_desc": tallest groups first (typical, front-loaded)
-      - "weight_desc": heaviest groups first
-      - "volume_desc": largest total volume first
-    """
-    truck_height_eff = truck_spec["height_in"] - DOOR_TRACK_LOSS_IN
-    groups = _find_dim_groups(order_lines, master)
+    for it in items:
+        d, w, h = it["d"], it["w"], it["h"]
+        stackable = it["stackable"]
 
-    if sort_strategy == "height_desc":
-        groups.sort(key=lambda g: -g["spec"]["height_in"])
-    elif sort_strategy == "weight_desc":
-        groups.sort(key=lambda g: -g["total_weight"])
-    elif sort_strategy == "volume_desc":
-        groups.sort(key=lambda g: -(
-            g["spec"]["width_in"] * g["spec"]["depth_in"]
-            * g["spec"]["height_in"] * g["total_qty"]
-        ))
+        # Find best candidate position
+        best = None  # tuple (new_max_x, z, y, x, ep_idx)
+        for ep in extreme_points:
+            ex, ey, ez = ep
+            x1 = ex + d
+            y1 = ey + w
+            z1 = ez + h
+            # Bounds: must fit inside truck
+            if x1 > L + EPS or y1 > W + EPS or z1 > H + EPS:
+                continue
+            # Stackable constraint
+            if not stackable and ez > EPS:
+                continue
+            # Collision check
+            if _collides(ex, ey, ez, d, w, h, placements):
+                continue
+            # Support check: if z > 0, must rest on existing box(es)
+            if ez > EPS and not _supported_from_below(ex, ey, ez, d, w, placements):
+                continue
+            # Score: minimize length used (max-x), then height, then width
+            current_max_x = max((p.x + p.dim_x for p in placements), default=0.0)
+            new_max_x = max(current_max_x, x1)
+            score = (new_max_x, ez, ey)
+            if best is None or score < best:
+                best = (new_max_x, ez, ey, ex)
 
-    all_placements: List[Placement] = []
-    x_cursor: float = 0.0
-    unfitted: List[Dict[str, Any]] = []
+        if best is None:
+            unfitted_by_model[it["model_code"]] = (
+                unfitted_by_model.get(it["model_code"], 0) + 1
+            )
+            continue
 
-    for g in groups:
-        placements, next_x = _lane_pack_group(
-            g["items"], g["spec"], master, x_cursor,
-            truck_spec["width_in"], truck_height_eff,
+        _, ez, ey, ex = best
+        new_placement = Placement(
+            seq=0,
+            model_code=it["model_code"],
+            x=ex, y=ey, z=ez,
+            dim_x=d, dim_y=w, dim_z=h,
+            weight_lb=it["weight"],
+            lane=int(round(ey / w)) if w > 0 else 0,
+            layer=int(round(ez / h)) if h > 0 else 0,
         )
-        valid = [p for p in placements if p.x + p.dim_x <= truck_spec["length_in"]]
-        if len(valid) < len(placements):
-            missing_by_model: Dict[str, int] = {}
-            for p in placements[len(valid):]:
-                missing_by_model[p.model_code] = missing_by_model.get(p.model_code, 0) + 1
-            for mc, q in missing_by_model.items():
-                unfitted.append({"model_code": mc, "quantity": q})
-        all_placements.extend(valid)
-        if valid:
-            x_cursor = max(x_cursor, max((p.x + p.dim_x) for p in valid))
+        placements.append(new_placement)
 
-    for i, p in enumerate(all_placements, 1):
+        # Update extreme points: 3 new candidate corners
+        new_eps = [
+            (ex + d, ey, ez),   # right face origin
+            (ex, ey + w, ez),   # +y face origin
+            (ex, ey, ez + h),   # top face origin
+        ]
+        for new_ep in new_eps:
+            nex, ney, nez = new_ep
+            # Prune obviously bad EPs: out of bounds or inside an existing box
+            if nex > L - EPS or ney > W - EPS or nez > H - EPS:
+                continue
+            if any(p.x + EPS < nex < p.x + p.dim_x - EPS and
+                   p.y + EPS < ney < p.y + p.dim_y - EPS and
+                   p.z + EPS < nez < p.z + p.dim_z - EPS
+                   for p in placements):
+                continue
+            if new_ep not in extreme_points:
+                extreme_points.append(new_ep)
+        # Remove the consumed EP if it was used
+        # (Optional optimization; left in is fine — collision check filters later)
+
+    for i, p in enumerate(placements, 1):
         p.seq = i
 
-    return PackResult(
-        strategy=f"pair_{sort_strategy}",
-        placements=all_placements,
-        unfitted=unfitted,
-    )
+    unfitted = [
+        {"model_code": mc, "quantity": q} for mc, q in unfitted_by_model.items()
+    ]
+    return PackResult(strategy=strategy_name, placements=placements, unfitted=unfitted)
+
+
+def _supported_from_below(
+    x: float, y: float, z: float, d: float, w: float,
+    placed: List[Placement],
+) -> bool:
+    """True if a box at (x, y, z) with footprint d×w has support directly below.
+
+    Support = at least one placed box whose top face is at z and whose footprint
+    intersects the new box's footprint. (Simple check: any overlap is enough;
+    full-footprint support is not required to keep solutions feasible.)
+    """
+    for p in placed:
+        # Top face of p at exactly z?
+        if abs((p.z + p.dim_z) - z) > EPS:
+            continue
+        # x-y footprint overlap?
+        if (x + EPS < p.x + p.dim_x and x + d - EPS > p.x and
+            y + EPS < p.y + p.dim_y and y + w - EPS > p.y):
+            return True
+    return False
+
+
+def _expand_items(
+    order_lines: List[Dict[str, Any]], master: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Expand order lines into individual item records."""
+    items: List[Dict[str, Any]] = []
+    for ol in order_lines:
+        spec = master[ol["model_code"]]
+        for _ in range(ol["quantity"]):
+            items.append({
+                "model_code": ol["model_code"],
+                "w": spec["width_in"],
+                "d": spec["depth_in"],
+                "h": spec["height_in"],
+                "weight": spec["weight_lb"],
+                "stackable": bool(spec.get("stackable", False)),
+            })
+    return items
 
 
 def find_best(
@@ -259,9 +252,26 @@ def find_best(
     master: Dict[str, Dict[str, Any]],
     truck_spec: Dict[str, Any],
 ) -> PackResult:
-    """Try all strategies, pick best: most fitted then most compact."""
-    strategies = ["height_desc", "weight_desc", "volume_desc"]
-    results = [pair_pack(order_lines, master, truck_spec, s) for s in strategies]
+    """Try multiple sort orders, pick result with most fitted then shortest length."""
+    L = truck_spec["length_in"]
+    W = truck_spec["width_in"]
+    H = truck_spec["height_in"] - DOOR_TRACK_LOSS_IN
+
+    base_items = _expand_items(order_lines, master)
+
+    strategies = [
+        ("height_desc",     lambda i: (-i["h"], -i["w"] * i["d"], i["model_code"])),
+        ("volume_desc",     lambda i: (-i["w"] * i["d"] * i["h"], i["model_code"])),
+        ("base_area_desc",  lambda i: (-i["w"] * i["d"], -i["h"], i["model_code"])),
+        ("depth_desc",      lambda i: (-i["d"], -i["w"], i["model_code"])),
+    ]
+
+    results: List[PackResult] = []
+    for name, key in strategies:
+        sorted_items = sorted(base_items, key=key)
+        results.append(_pack_with_strategy(sorted_items, L, W, H, name))
+
+    # Best = most fitted, then min length
     results.sort(key=lambda r: (-r.fitted_count, r.x_used))
     return results[0]
 
@@ -272,23 +282,22 @@ def fits_formula(
     truck_spec: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
-    Closed-form fit predictor — answers "will this load fit?" without running
-    the packer simulation. Matches `simulate()` exactly under max-fit mode.
+    Closed-form UPPER BOUND predictor — per-group sequential packing with
+    fixed orientation. Real simulator (`simulate()`) uses extreme-point heuristic
+    and may give shorter length via cross-group stacking / row backfill.
 
-    Formula (per dim-group g sharing same w×d×h):
+    Formula (per dim-group g):
+        eff_H    = H_truck − 10 in
+        layers_g = ⌊eff_H / h_g⌋ if stackable_g else 1
+        lanes_g  = ⌊W_truck / w_g⌋
+        per_row  = lanes_g × layers_g
+        rows_g   = ⌈Q_g / per_row⌉
+        length_g = rows_g × d_g
 
-        eff_H        = H_truck − 10 in                  (door track loss)
-        layers_g     = ⌊eff_H / h_g⌋   if stackable_g  else 1
-        For each orientation (w*, d*) in {(w,d), (d,w)}:
-            lanes    = ⌊W_truck / w*⌋
-            per_row  = lanes × layers_g
-            rows     = ⌈Q_g / per_row⌉
-            length   = rows × d*
-        length_g     = min length over both orientations
+    FITS_upper iff Σ length_g ≤ L_truck.
 
-        FITS  iff  Σ length_g  ≤  L_truck
-
-    All linear units in inches. No load_bear / fragile gating (max-fit mode).
+    All linear units in inches. No rotation. No cross-group optimization in
+    this formula (use simulate() for the actual best).
     """
     eff_h = truck_spec["height_in"] - DOOR_TRACK_LOSS_IN
     truck_w = truck_spec["width_in"]
@@ -307,37 +316,24 @@ def fits_formula(
     breakdown: List[Dict[str, Any]] = []
     for key, g in groups.items():
         w, d, h = key
-        stackable = g["spec"].get("stackable", False)
+        stackable = bool(g["spec"].get("stackable", False))
         layers = max(1, int(eff_h // h)) if stackable else 1
-
-        best = None
-        for orient_w, orient_d in ((w, d), (d, w)):
-            lanes = max(1, int(truck_w // orient_w))
-            per_row = lanes * layers
-            rows = -(-g["qty"] // per_row)
-            length = rows * orient_d
-            if best is None or length < best["length"]:
-                best = {
-                    "orient_w": orient_w, "orient_d": orient_d,
-                    "lanes": lanes, "layers": layers,
-                    "per_row": per_row, "rows": rows, "length": length,
-                }
-
-        total_length += best["length"]
+        lanes = max(1, int(truck_w // w))
+        per_row = lanes * layers
+        rows = -(-g["qty"] // per_row)
+        length = rows * d
+        total_length += length
         breakdown.append({
             "models": g["models"],
             "qty": g["qty"],
             "w_in": w, "d_in": d, "h_in": h,
             "stackable": stackable,
-            "orient_w_in": best["orient_w"],
-            "orient_d_in": best["orient_d"],
-            "rotated": (best["orient_w"] != w),
-            "lanes": best["lanes"],
-            "layers": best["layers"],
-            "per_row": best["per_row"],
-            "rows": best["rows"],
-            "length_in": round(best["length"], 2),
-            "length_ft": round(best["length"] / IN_PER_FT, 2),
+            "lanes": lanes,
+            "layers": layers,
+            "per_row": per_row,
+            "rows": rows,
+            "length_in": round(length, 2),
+            "length_ft": round(length / IN_PER_FT, 2),
         })
 
     return {
@@ -359,14 +355,10 @@ def simulate(
     truck_spec: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
-    Main entrypoint. Returns full simulation report with metrics + placements.
-    All linear units in inches, weight in pounds.
+    Main entrypoint — true 3D bin-packing with fixed orientation.
 
-    Usage:
-        result = simulate(order_lines, master, truck_spec)
-        if result['fits']:
-            for p in result['placements']:
-                print(p['model_code'], p['x_in'], p['y_in'], p['z_in'])
+    Returns simulation report with metrics + placements. All linear units in
+    inches, weight in pounds.
     """
     best = find_best(order_lines, master, truck_spec)
     m = best.metrics(truck_spec)
@@ -402,3 +394,9 @@ def simulate(
             for p in best.placements
         ],
     }
+
+
+# Backwards compatibility shim: some tests still import these names
+def pair_pack(order_lines, master, truck_spec, sort_strategy: str = "height_desc"):
+    """Legacy entry — delegates to find_best (multi-strategy picks best)."""
+    return find_best(order_lines, master, truck_spec)

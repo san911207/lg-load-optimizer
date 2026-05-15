@@ -76,6 +76,12 @@ DEFAULT_MASTER = APP_DIR / "data" / "sample_input.xlsx"
 OUT_DIR = APP_DIR / "outputs"
 OUT_DIR.mkdir(exist_ok=True)
 
+# Per-user persistent data dir (so .exe users keep their custom master across
+# restarts without re-uploading).
+USER_DATA_DIR = Path.home() / "Documents" / "LG_Load_Optimizer"
+USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+USER_MASTER_PATH = USER_DATA_DIR / "master.xlsx"
+
 
 @st.cache_data
 def _load_workbook(path: str):
@@ -86,6 +92,36 @@ def _load_workbook(path: str):
     except ValueError:
         df_loads = None
     return df_master, df_trucks, df_loads
+
+
+def _load_initial_data() -> tuple[pd.DataFrame, pd.DataFrame, Optional[pd.DataFrame], str]:
+    """Prefer the user-saved master, fall back to bundled sample."""
+    if USER_MASTER_PATH.exists():
+        try:
+            df_master, df_trucks, df_loads = _load_workbook(str(USER_MASTER_PATH))
+            return df_master, df_trucks, df_loads, "user"
+        except Exception:
+            pass  # corrupted user file → fall back
+    df_master, df_trucks, df_loads = _load_workbook(str(DEFAULT_MASTER))
+    return df_master, df_trucks, df_loads, "bundled"
+
+
+def save_user_master(
+    df_master: pd.DataFrame,
+    df_trucks: Optional[pd.DataFrame] = None,
+    df_loads: Optional[pd.DataFrame] = None,
+) -> Path:
+    """Persist current master to ~/Documents/LG_Load_Optimizer/master.xlsx so
+    it auto-loads on the next .exe launch."""
+    USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with pd.ExcelWriter(USER_MASTER_PATH, engine="openpyxl") as w:
+        df_master.to_excel(w, sheet_name="Model_Master", index=False)
+        if df_trucks is not None:
+            df_trucks.to_excel(w, sheet_name="Truck_Master", index=False)
+        if df_loads is not None:
+            df_loads.to_excel(w, sheet_name="Loads", index=False)
+    _load_workbook.clear()  # invalidate cached read
+    return USER_MASTER_PATH
 
 
 def apply_calibrations(master_dict: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -111,12 +147,13 @@ st.sidebar.markdown("---")
 st.sidebar.caption("Phase 0 · best_packer engine")
 
 
-# Initial master + trucks
+# Initial master + trucks (auto-loads user-saved master if present)
 if "df_master" not in st.session_state:
-    df_master, df_trucks, df_loads = _load_workbook(str(DEFAULT_MASTER))
+    df_master, df_trucks, df_loads, source = _load_initial_data()
     st.session_state.df_master = df_master
     st.session_state.df_trucks = df_trucks
     st.session_state.df_loads = df_loads
+    st.session_state.master_source = source
 
 
 # =========================================================================
@@ -1155,9 +1192,16 @@ if page == "📦 Load Plan":
 # =========================================================================
 elif page == "📋 Model Master":
     st.title("📋 Model Master")
-    st.caption("Appliance / TV / monitor model master (real measured dimensions).")
+    st.caption("Appliance / TV / monitor model master — US units (in / lb / ft³).")
 
     df_master = st.session_state.df_master
+    source = st.session_state.get("master_source", "bundled")
+    src_label = (
+        f"💾 Loaded from your saved master: `{USER_MASTER_PATH}`"
+        if source == "user" else
+        "📦 Loaded from bundled sample. Upload a new master below to persist it."
+    )
+    st.info(src_label)
     st.markdown(f"**Total {len(df_master)} models registered**")
 
     cats = ["All"] + sorted(df_master["category"].unique().tolist())
@@ -1166,13 +1210,74 @@ elif page == "📋 Model Master":
     st.dataframe(df_view, use_container_width=True, hide_index=True)
 
     st.markdown("---")
-    st.markdown("### 🔄 Master update")
-    new_file = st.file_uploader("Upload new master Excel (sheet: Model_Master)", type=["xlsx"])
+    st.markdown("### 🔄 Update master (persisted across restarts)")
+    st.caption(
+        "Upload an Excel file with sheets `Model_Master` (required), "
+        "`Truck_Master` (optional), and `Loads` (optional). "
+        "Required columns in Model_Master: model_code, category, width_in, depth_in, "
+        "height_in, weight_lb, stackable, volume_cft."
+    )
+    new_file = st.file_uploader("Upload new master Excel", type=["xlsx"], key="master_uploader")
     if new_file:
-        new_master = pd.read_excel(new_file, sheet_name="Model_Master")
-        st.session_state.df_master = new_master
-        st.success(f"✅ Master replaced: {len(new_master)} models")
-        st.rerun()
+        try:
+            new_master = pd.read_excel(new_file, sheet_name="Model_Master")
+            try:
+                new_trucks = pd.read_excel(new_file, sheet_name="Truck_Master")
+            except ValueError:
+                new_trucks = st.session_state.df_trucks
+            try:
+                new_loads = pd.read_excel(new_file, sheet_name="Loads")
+            except ValueError:
+                new_loads = st.session_state.df_loads
+            saved_path = save_user_master(new_master, new_trucks, new_loads)
+            st.session_state.df_master = new_master
+            st.session_state.df_trucks = new_trucks
+            st.session_state.df_loads = new_loads
+            st.session_state.master_source = "user"
+            # Drop any cached simulations — they ran with old master
+            for k in list(st.session_state.keys()):
+                if isinstance(k, str) and k.startswith("sim_"):
+                    del st.session_state[k]
+            st.success(f"✅ Saved to `{saved_path}` ({len(new_master)} models). Will auto-load on next launch.")
+            st.rerun()
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Could not load uploaded file: {exc}")
+
+    col_dl, col_reset = st.columns(2)
+    with col_dl:
+        # Build a snapshot xlsx in memory for download
+        from io import BytesIO
+        buf = BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as w:
+            df_master.to_excel(w, sheet_name="Model_Master", index=False)
+            st.session_state.df_trucks.to_excel(w, sheet_name="Truck_Master", index=False)
+            if st.session_state.df_loads is not None:
+                st.session_state.df_loads.to_excel(w, sheet_name="Loads", index=False)
+        st.download_button(
+            "📥 Download current master (backup)",
+            buf.getvalue(),
+            file_name="lg_master_backup.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key="master_download",
+        )
+    with col_reset:
+        if source == "user":
+            if st.button(
+                "♻️ Reset to bundled sample",
+                use_container_width=True,
+                help="Removes saved master file; next launch reverts to bundled sample.",
+            ):
+                try:
+                    USER_MASTER_PATH.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                df_master, df_trucks, df_loads, source = _load_initial_data()
+                st.session_state.df_master = df_master
+                st.session_state.df_trucks = df_trucks
+                st.session_state.df_loads = df_loads
+                st.session_state.master_source = source
+                st.rerun()
 
 
 # =========================================================================

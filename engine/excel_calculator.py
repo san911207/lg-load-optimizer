@@ -23,12 +23,13 @@ from openpyxl.formatting.rule import FormulaRule, CellIsRule
 DOOR_TRACK_LOSS_IN = 10
 N_INPUT_ROWS = 30
 
-# Headers for the input table
+# Headers for the input table (no rotation — fixed orientation)
+# N is a hidden helper column carrying dim_key for auto-grouping.
 HEADERS = [
     "#", "Model Code", "Qty",
     "w (in)", "d (in)", "h (in)", "Stackable",
-    "Layers", "Length A (ft)", "Length B (ft)",
-    "Min Length (ft)", "Volume (ft³)", "Weight (lb)",
+    "Layers", "Lanes", "Group Qty",
+    "Length (ft)", "Volume (ft³)", "Weight (lb)", "dim_key",
 ]
 
 # CLAUDE.md calibrations (US units)
@@ -87,8 +88,9 @@ def _build_main_sheet(ws, master_df: pd.DataFrame) -> None:
     ws["A1"].font = Font(size=18, bold=True, color="0F6E56")
     ws.merge_cells("A1:M1")
     ws["A2"] = (
-        "Closed-form fit predictor — all US units (in / lb / ft³). "
-        "Max-fit mode: load_bear / fragile ignored, door track (10 in) auto-applied."
+        "Per-group UPPER-BOUND estimate (no rotation, US units, auto-grouped by dim). "
+        "Real simulator (.exe / Streamlit) uses 3D extreme-point packing and "
+        "may give 5~15% shorter length via cross-group stacking."
     )
     ws["A2"].font = Font(italic=True, color="6B7280")
     ws.merge_cells("A2:M2")
@@ -100,8 +102,13 @@ def _build_main_sheet(ws, master_df: pd.DataFrame) -> None:
     ws["A6"] = "2. For each item: enter SKU code in column B (dropdown) and quantity in column C."
     ws["A7"] = (
         "3. Same-dim SKUs (washer + dryer, etc.): combine into ONE row "
-        "for the simulator-exact answer."
+        "for a tighter per-group estimate."
     )
+    ws["A8"] = (
+        "Note: Orientation is FIXED (no 90° rotation). Width = side along truck wall, "
+        "Depth = along truck length."
+    )
+    ws["A8"].font = Font(italic=True, color="6B7280")
 
     # Truck selector + specs
     ws["B9"] = "Truck:"
@@ -198,20 +205,28 @@ def _build_main_sheet(ws, master_df: pd.DataFrame) -> None:
             f'=IF(B{r}="","",IF({stack}=TRUE,FLOOR($C$13/F{r},1),1))'
         ))
 
-        # I: Length A (ft) — orient A
+        # I: lanes = floor(truck_W / w_in)
         ws.cell(row=r, column=9, value=(
-            f'=IF(B{r}="","",CEILING(C{r}/(FLOOR($C$11/D{r},1)*H{r}),1)*E{r}/12)'
+            f'=IF(B{r}="","",FLOOR($C$11/D{r},1))'
         ))
-        ws.cell(row=r, column=9).number_format = "0.00"
 
-        # J: Length B (ft) — orient B (90° rotated)
+        # N: dim_key = concat(w, "x", d, "x", h) — hidden helper for grouping
+        ws.cell(row=r, column=14, value=(
+            f'=IF(B{r}="","",D{r}&"x"&E{r}&"x"&F{r})'
+        ))
+
+        # J: Group Qty = SUMIFS of qty across all rows with same dim_key
         ws.cell(row=r, column=10, value=(
-            f'=IF(B{r}="","",CEILING(C{r}/(FLOOR($C$11/E{r},1)*H{r}),1)*D{r}/12)'
+            f'=IF(B{r}="","",SUMIFS(C:C,N:N,N{r}))'
         ))
-        ws.cell(row=r, column=10).number_format = "0.00"
 
-        # K: Min Length (ft)
-        ws.cell(row=r, column=11, value=f'=IF(B{r}="","",MIN(I{r},J{r}))')
+        # K: Length (ft) — proportional share of group length
+        #    group_length = ceil(group_qty / (lanes × layers)) × depth_in / 12
+        #    this_row = group_length × qty / group_qty
+        ws.cell(row=r, column=11, value=(
+            f'=IF(B{r}="","",'
+            f'CEILING(J{r}/(I{r}*H{r}),1)*E{r}/12*C{r}/J{r})'
+        ))
         ws.cell(row=r, column=11).number_format = "0.00"
 
         # L: Volume per row (ft³) = qty × volume_cft (direct from master col 12)
@@ -351,11 +366,12 @@ def _build_main_sheet(ws, master_df: pd.DataFrame) -> None:
     ws.cell(row=margin_row, column=13, value=f"=M{truck_row}-M{total_row}")
     ws.cell(row=margin_row, column=13).number_format = '+#,##0" lb";-#,##0" lb"'
 
-    # Column widths + freeze
-    widths = {"A": 5, "B": 16, "C": 9, "D": 9, "E": 9, "F": 9,
-              "G": 11, "H": 9, "I": 14, "J": 14, "K": 16, "L": 14, "M": 14}
+    # Column widths + freeze + hide helper col N
+    widths = {"A": 5, "B": 16, "C": 8, "D": 9, "E": 9, "F": 9,
+              "G": 11, "H": 8, "I": 8, "J": 10, "K": 14, "L": 14, "M": 14}
     for col, w in widths.items():
         ws.column_dimensions[col].width = w
+    ws.column_dimensions["N"].hidden = True
     ws.freeze_panes = "A18"
 
 
