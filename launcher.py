@@ -1,6 +1,6 @@
 """
-PyInstaller entry point — spawns Streamlit on a free port and opens the
-browser. Bundled .exe / .app data files are unpacked into sys._MEIPASS.
+PyInstaller entry point — spawns Streamlit and opens the browser.
+Defensive logging so any failure is visible in the console window.
 """
 from __future__ import annotations
 
@@ -9,15 +9,25 @@ import socket
 import sys
 import threading
 import time
+import traceback
 import webbrowser
 from pathlib import Path
 
 
+def _say(msg: str) -> None:
+    """Immediate console print (flush so PyInstaller console shows it)."""
+    print(msg, flush=True)
+    sys.stdout.flush()
+
+
 def _find_free_port(start: int = 8501, end: int = 8600) -> int:
     for port in range(start, end):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            if s.connect_ex(("127.0.0.1", port)) != 0:
-                return port
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("127.0.0.1", port))
+            return port
+        except OSError:
+            continue
     return start
 
 
@@ -30,29 +40,80 @@ def _resource_path(rel: str) -> Path:
 
 
 def main() -> None:
-    port = _find_free_port()
-    app_path = _resource_path("app.py")
+    _say("=" * 64)
+    _say("  LG Load Optimizer — starting up...")
+    _say("=" * 64)
+    _say("")
+    _say("Please wait 10-30 seconds for Streamlit to initialize.")
+    _say("A browser tab will open automatically. If not, copy the URL below.")
+    _say("")
 
-    # Streamlit reads relative paths from cwd → chdir to bundle root
-    os.chdir(str(_resource_path(".")))
+    try:
+        port = _find_free_port()
+        app_path = _resource_path("app.py")
 
-    # Open browser after Streamlit warms up
-    def _open() -> None:
-        time.sleep(3.0)
-        webbrowser.open(f"http://localhost:{port}")
+        if not app_path.exists():
+            _say(f"ERROR: app.py not found at {app_path}")
+            _say("Files in bundle:")
+            for p in _resource_path(".").iterdir():
+                _say(f"  - {p.name}")
+            input("Press Enter to exit...")
+            sys.exit(1)
 
-    threading.Thread(target=_open, daemon=True).start()
+        os.chdir(str(_resource_path(".")))
 
-    sys.argv = [
-        "streamlit", "run", str(app_path),
-        "--server.port", str(port),
-        "--server.headless", "true",
-        "--server.runOnSave", "false",
-        "--browser.gatherUsageStats", "false",
-        "--global.developmentMode=false",
-    ]
-    from streamlit.web import cli as stcli
-    sys.exit(stcli.main())
+        url = f"http://localhost:{port}"
+        _say(f"  URL: {url}")
+        _say("  (Ctrl+C in this window to stop the app)")
+        _say("=" * 64)
+        _say("")
+
+        # Open browser after Streamlit binds the port
+        def _open() -> None:
+            for _ in range(20):  # poll up to 20s
+                time.sleep(1.0)
+                try:
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.settimeout(0.5)
+                        if s.connect_ex(("127.0.0.1", port)) == 0:
+                            try:
+                                webbrowser.open(url)
+                            except Exception as e:
+                                _say(f"(Auto-open failed: {e}. Open the URL manually.)")
+                            return
+                except Exception:
+                    continue
+            _say(
+                "(Streamlit didn't bind within 20s. "
+                "Check above for errors and paste the URL into a browser.)"
+            )
+
+        threading.Thread(target=_open, daemon=True).start()
+
+        sys.argv = [
+            "streamlit", "run", str(app_path),
+            "--server.port", str(port),
+            "--server.address", "127.0.0.1",
+            "--server.headless", "true",
+            "--server.runOnSave", "false",
+            "--browser.gatherUsageStats", "false",
+            "--global.developmentMode=false",
+        ]
+
+        from streamlit.web import cli as stcli  # noqa: WPS433  (intentional late import)
+        stcli.main()
+
+    except SystemExit:
+        # streamlit cli calls sys.exit on shutdown — pass through cleanly
+        raise
+    except Exception:
+        _say("=" * 64)
+        _say("FATAL ERROR while launching Streamlit:")
+        _say("")
+        _say(traceback.format_exc())
+        _say("=" * 64)
+        input("Press Enter to close this window...")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
