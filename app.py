@@ -1203,6 +1203,20 @@ def render_step2(
     )
     render_legend_chips(sim, master)
 
+    # ── Why this arrangement (natural-language explanation) ──
+    try:
+        from engine.explain import explain, explain_html
+        reasons = explain(sim, master, truck_spec)
+        if reasons:
+            st.markdown(
+                '<div style="font-size:13px;font-weight:600;color:#111827;'
+                'margin:14px 0 6px 0;">💡 Why this arrangement</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(explain_html(reasons), unsafe_allow_html=True)
+    except Exception:
+        pass
+
     # ───── 2. Zone breakdown + sequence ─────
     st.markdown("##### 2. Zone breakdown — rows × lanes × tiers")
     df_zones = build_zone_breakdown_df(sim, master)
