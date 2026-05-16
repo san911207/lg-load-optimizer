@@ -219,9 +219,14 @@ def verify(
         spec = master.get(p["model_code"], {})
         cat = spec.get("category", "")
         is_fragile = bool(spec.get("fragile", False))
+        # ``fragile AND stackable`` means it's a packaged appliance/TV/monitor
+        # whose carton is rated for stacking — boxes on top are allowed.
+        # ``fragile AND NOT stackable`` is the real "nothing-above" case
+        # (delicate items, glass panels, finished gas range tops, etc.).
+        is_no_overhead = is_fragile and not bool(spec.get("stackable", False))
 
         # Fragile no-overhead
-        if is_fragile and above_of[p["seq"]]:
+        if is_no_overhead and above_of[p["seq"]]:
             for q in above_of[p["seq"]]:
                 findings.append(Finding(
                     rule="fragile_no_overhead",

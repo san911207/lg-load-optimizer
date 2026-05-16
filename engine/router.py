@@ -132,6 +132,7 @@ def _wrap_milp(
         "fits": m.fits,
         "fitted_count": m.fitted_count,
         "requested_count": m.requested_count,
+        "unfitted_count": m.requested_count - m.fitted_count,
         "placements": m.placements,
         "unfitted_detail": m.unfitted_detail,
         "engine": engine_label,
@@ -203,6 +204,8 @@ def _wrap_sa(heur: Dict[str, Any], sa, truck_spec: Dict[str, Any], elapsed: floa
             "dim_y_in": p.dim_y,
             "dim_z_in": p.dim_z,
             "weight_lb": p.weight_lb,
+            "lane": p.lane,
+            "layer": p.layer,
         }
         for idx, p in enumerate(sa.placements)
     ]
@@ -218,7 +221,10 @@ def _wrap_sa(heur: Dict[str, Any], sa, truck_spec: Dict[str, Any], elapsed: floa
     out = dict(heur)
     out["placements"] = placements_dict
     out["fitted_count"] = len(placements_dict)
-    out["fits"] = sa.x_used_in < L
+    # Recompute unfitted_count from the heuristic seed's requested count.
+    requested = out.get("requested_count", len(placements_dict))
+    out["unfitted_count"] = max(0, requested - len(placements_dict))
+    out["fits"] = (out["unfitted_count"] == 0) and (sa.x_used_in <= L + 0.01)
     out["engine"] = "Heuristic+SA"
     out["status"] = "Refined"
     out["is_provable_optimal"] = False

@@ -17,6 +17,7 @@ MASTER = {
     "LRFXS3106": {"category": "Refrigerator", "width_in": 38, "depth_in": 38, "height_in": 70, "weight_lb": 380, "fragile": False, "stackable": False},
     "MV1825":    {"category": "Microwave", "width_in": 31, "depth_in": 18, "height_in": 18, "weight_lb": 45, "fragile": False, "stackable": True},
     "TV85":      {"category": "TV", "width_in": 85, "depth_in": 12, "height_in": 50, "weight_lb": 95, "fragile": True, "stackable": False},
+    "TV55_BOX":  {"category": "TV", "width_in": 55, "depth_in": 10, "height_in": 35, "weight_lb": 40, "fragile": True, "stackable": True},
     "PK305":     {"category": "Panel", "width_in": 31, "depth_in": 4, "height_in": 32, "weight_lb": 8, "fragile": False, "stackable": False},
 }
 
@@ -101,6 +102,19 @@ def test_verify_category_blacklist_warns():
     warn = [f for f in findings if f.severity == Severity.WARN]
     assert len(warn) == 1
     assert warn[0].rule == "category_blacklist"
+
+
+def test_verify_fragile_but_stackable_box_allows_overhead():
+    """Stackable TV carton (fragile=True, stackable=True) is allowed to have
+    another carton on top — most appliance/TV boxes are rated for stacking."""
+    placements = [
+        {"seq": 1, "model_code": "TV55_BOX", "x_in": 0, "y_in": 0, "z_in": 0,
+         "dim_x_in": 55, "dim_y_in": 10, "dim_z_in": 35, "weight_lb": 40},
+        {"seq": 2, "model_code": "TV55_BOX", "x_in": 0, "y_in": 0, "z_in": 35,
+         "dim_x_in": 55, "dim_y_in": 10, "dim_z_in": 35, "weight_lb": 40},
+    ]
+    findings = verify(placements, MASTER)
+    assert findings == []
 
 
 def test_verify_clean_load_no_findings():

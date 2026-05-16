@@ -386,17 +386,21 @@ def milp_solve(
 
     placements: List[Dict[str, Any]] = []
     for i, it in enumerate(items):
+        y_val = pulp.value(y_vars[i]) or 0.0
+        z_val = pulp.value(z_vars[i]) or 0.0
         placements.append({
             "seq": it["seq"],
             "model_code": it["model_code"],
             "category": it["category"],
             "x_in": round(pulp.value(x_vars[i]) or 0.0, 3),
-            "y_in": round(pulp.value(y_vars[i]) or 0.0, 3),
-            "z_in": round(pulp.value(z_vars[i]) or 0.0, 3),
+            "y_in": round(y_val, 3),
+            "z_in": round(z_val, 3),
             "dim_x_in": it["d"],
             "dim_y_in": it["w"],
             "dim_z_in": it["h"],
             "weight_lb": it["weight_lb"],
+            "lane": int(round(y_val / it["w"])) if it["w"] > 0 else 0,
+            "layer": int(round(z_val / it["h"])) if it["h"] > 0 else 0,
         })
 
     obj_val = float(pulp.value(L_used) or 0.0)

@@ -54,6 +54,7 @@ class Placement:
     weight_lb: float
     lane: int         # approx lane index = floor(y / dim_y)
     layer: int        # approx layer index = floor(z / dim_z)
+    stackable: bool = True   # can support load on top (LG warehouse rule)
 
 
 @dataclass
@@ -190,6 +191,7 @@ def _pack_with_strategy(
             weight_lb=it["weight"],
             lane=int(round(ey / w)) if w > 0 else 0,
             layer=int(round(ez / h)) if h > 0 else 0,
+            stackable=stackable,
         )
         placements.append(new_placement)
 
@@ -230,6 +232,11 @@ def _supported_from_below(
     """Strict support — the new box's entire footprint must rest on ONE box
     whose top face is at z. No overhang allowed (would look like the box is
     floating + would be physically unsafe to load).
+
+    The supporter must also have ``stackable=True``. Fridges, ranges, and
+    wall-ovens carry ``stackable=False`` because their tops are not
+    engineered to hold load — placing items on them violates warehouse-OPS
+    rules and the post-pack audit will BLOCK the work order otherwise.
     """
     if z <= EPS:
         return True  # floor
@@ -243,6 +250,9 @@ def _supported_from_below(
             p.x + p.dim_x >= x1 - EPS and
             p.y <= y + EPS and
             p.y + p.dim_y >= y1 - EPS):
+            # Supporter must be stackable on top
+            if not p.stackable:
+                continue
             return True
     return False
 

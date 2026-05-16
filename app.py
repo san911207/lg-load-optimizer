@@ -21,6 +21,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from engine.best_packer import simulate, fits_formula
+from engine.router import solve as router_solve
 
 # ─────────────────────────────────────────────────────────────────────────
 # Design tokens (DESIGN_SPEC.md §Color tokens & §Color palette)
@@ -1586,12 +1587,14 @@ if page == "📦 Load Plan":
                 "*unfitted* in the result. Check your Model_Master values."
             )
 
-    # Run both simulations (cache by load_id + signature)
+    # Run both simulations via the v2 router (MILP/SA/heuristic auto-routing,
+    # pair-packing, post-pack audit). Cache by load_id + signature so the
+    # solver doesn't re-run when the user tabs between Step 1 and Step 2.
     sig = (load_id, tuple(sorted((l["model_code"], l["quantity"]) for l in load_lines)))
     cache_key = f"sim_{sig}"
     if cache_key not in st.session_state:
-        sim_26 = simulate(load_lines, master, trucks_map["26ft"])
-        sim_53 = simulate(load_lines, master, trucks_map["53ft"])
+        sim_26 = router_solve(load_lines, master, trucks_map["26ft"], time_budget_s=15.0)
+        sim_53 = router_solve(load_lines, master, trucks_map["53ft"], time_budget_s=15.0)
         st.session_state[cache_key] = (sim_26, sim_53)
     sim_26, sim_53 = st.session_state[cache_key]
 
