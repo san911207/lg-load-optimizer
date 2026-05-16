@@ -117,37 +117,39 @@ def explain(
     is_optimal = result.get("is_provable_optimal", False)
     initial_x = result.get("sa_initial_x_used_in")
     x_used = metrics.get("x_used_in")
+    # D4 — Strip solver jargon ("MILP", "extreme-point", "Simulated Annealing")
+    # from user-facing reasons. The dispatcher needs to know WHAT the engine
+    # did, not WHICH ALGORITHM it ran.
     if is_optimal:
         reasons.append(Reason(
-            "Mathematically optimal",
-            f"The MILP solver explored every legal arrangement and proved that "
-            f"{metrics.get('x_used_ft', 0):.2f} ft is the shortest possible trailer "
-            "length for this load — no arrangement can do better.",
+            "Proven shortest arrangement",
+            f"The engine explored every legal arrangement and proved that "
+            f"{metrics.get('x_used_ft', 0):.2f} ft is the shortest possible "
+            "trailer length for this load — no arrangement can do better.",
             "success",
         ))
     elif initial_x and x_used and initial_x > x_used:
         gain_pct = (initial_x - x_used) / initial_x * 100
         if gain_pct >= 0.5:
             reasons.append(Reason(
-                "Refined by simulated annealing",
-                f"The heuristic baseline used {initial_x/12.0:.2f} ft; SA refined "
-                f"the packing order down to {x_used/12.0:.2f} ft "
-                f"({gain_pct:+.1f}% shorter) in "
-                f"{result.get('sa_iterations', 0)} iterations.",
+                "Space-optimized layout",
+                f"The initial layout used {initial_x/12.0:.2f} ft; the engine "
+                f"refined the packing order to {x_used/12.0:.2f} ft "
+                f"({gain_pct:+.1f}% shorter).",
                 "info",
             ))
     elif "SA" in engine:
         reasons.append(Reason(
-            "Refined by simulated annealing",
-            f"SA explored {result.get('sa_iterations', 0)} alternate packing "
-            "orders within the time budget; the best arrangement is shown.",
+            "Space-optimized layout",
+            "The engine searched alternate packing orders and kept the best "
+            "arrangement found within the time budget.",
             "info",
         ))
     else:
         reasons.append(Reason(
-            "Heuristic packing",
-            "Extreme-point heuristic with the strongest of 4 sort strategies. "
-            "Fast (<1 s) and respects all warehouse stacking rules.",
+            "Fast arrangement",
+            "All warehouse stacking rules met. Run time under 1 second — "
+            "best available for loads above 300 items.",
             "info",
         ))
 
@@ -156,14 +158,15 @@ def explain(
     wrn = result.get("audit_warn_count", 0)
     if blk:
         reasons.append(Reason(
-            "Audit BLOCKs detected",
-            f"{blk} placement(s) violate fragile / no-overhead / category rules — "
-            "see Audit findings panel and fix before loading.",
+            "Loading rule violation(s)",
+            f"{blk} placement(s) break fragile / no-overhead / category rules — "
+            "open the 'Audit findings' panel below, resolve each item, then "
+            "re-run before handing this order to the driver.",
             "warn",
         ))
     elif wrn:
         reasons.append(Reason(
-            "Audit warnings",
+            "Supervisor review needed",
             f"{wrn} placement(s) are loadable but flagged for supervisor "
             "review (category-blacklist or stacking edge cases).",
             "warn",

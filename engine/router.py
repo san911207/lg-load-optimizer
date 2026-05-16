@@ -78,7 +78,16 @@ def solve(
 
     if engine_choice == "milp":
         m = milp_solve(pack_lines, master, truck_spec, time_limit_s=time_budget_s)
-        if m.fits and m.fitted_count == n_items:
+        # Use MILP only if it found a complete, valid arrangement. Time-limit
+        # results with partial fit (or solver-unavailable / infeasible /
+        # not-solved) fall through to the SA path so the dispatcher always
+        # gets a usable envelope (QA Lead audit finding #4).
+        milp_complete = (
+            m.fits
+            and m.fitted_count == n_items
+            and m.status in {"Optimal", "Time-limit"}
+        )
+        if milp_complete:
             return _attach_audit(
                 _wrap_milp(m, pack_lines, master, truck_spec, "MILP"),
                 pair_info, master,
@@ -93,7 +102,7 @@ def solve(
         sa = sa_refine(pack_lines, master, truck_spec,
                        time_budget_s=min(sa_budget, SA_DEFAULT_BUDGET_S))
         return _attach_audit(
-            _wrap_sa(heur, sa, truck_spec, elapsed=time.monotonic() - start),
+            _wrap_sa(heur, sa, truck_spec, elapsed=time.monotonic() - start, master=master),
             pair_info, master,
         )
 
@@ -185,18 +194,31 @@ def _wrap_heuristic(heur, engine_label: str, elapsed: float) -> Dict[str, Any]:
     return out
 
 
-def _wrap_sa(heur: Dict[str, Any], sa, truck_spec: Dict[str, Any], elapsed: float) -> Dict[str, Any]:
+def _wrap_sa(
+    heur: Dict[str, Any], sa, truck_spec: Dict[str, Any],
+    elapsed: float,
+    master: Dict[str, Dict[str, Any]] | None = None,
+) -> Dict[str, Any]:
     """
     Merge heuristic envelope with SA's refined placements. SA returns ``Placement``
     objects (from ``engine.best_packer``); the rest of the app expects the dict
     form ``simulate()`` emits, so we convert.
     """
     L = truck_spec["length_in"]
+    # IMPORTANT — category MUST come from master so domain_rules.verify
+    # category-blacklist check fires on SA-routed loads (the 16-300 item
+    # range, which is exactly where mixed Microwave/Fridge stacking
+    # violations occur). Eng Lead audit finding #2.
+    def _cat_for(mc: str) -> str:
+        if master is None:
+            return ""
+        return master.get(mc, {}).get("category", "")
+
     placements_dict = [
         {
             "seq": idx + 1,
             "model_code": p.model_code,
-            "category": "",  # filled in from master upstream if needed
+            "category": _cat_for(p.model_code),
             "x_in": round(p.x, 3),
             "y_in": round(p.y, 3),
             "z_in": round(p.z, 3),
@@ -232,6 +254,8 @@ def _wrap_sa(heur: Dict[str, Any], sa, truck_spec: Dict[str, Any], elapsed: floa
     out["sa_iterations"] = sa.iterations
     out["sa_improved"] = sa.improved
     out["sa_initial_x_used_in"] = round(sa.initial_x_used_in, 3)
+    out["sa_cluster_breaks"] = sa.cluster_breaks
+    out["sa_initial_cluster_breaks"] = sa.initial_cluster_breaks
     out["metrics"] = {
         "x_used_in": round(sa.x_used_in, 2),
         "x_used_ft": round(sa.x_used_in / 12.0, 2),

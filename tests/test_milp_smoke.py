@@ -100,4 +100,6 @@ def test_milp_infeasible_load():
     if r.fits:
         _no_overlap_and_in_bounds(r, micro_truck)
     else:
-        assert r.status in {"Infeasible", "Not Solved", "Undefined"}
+        # Phase A added an oversized-SKU pre-check so the malformed
+        # upBound&lt;lowBound LP is never built (test_b3 / oversized SKU bug).
+        assert r.status in {"Infeasible", "Not Solved", "Undefined", "Oversized-SKU"}

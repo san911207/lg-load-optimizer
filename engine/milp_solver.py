@@ -35,6 +35,7 @@ import pulp
 
 
 IN_PER_FT = 12.0
+EPS = 0.01
 DOOR_TRACK_LOSS_IN = 10.0
 DOOR_TRACK_LEN_IN = 60.0
 HEAVY_THRESHOLD_LB = 150.0     # items at or above this weight must rest on z=0
@@ -229,6 +230,27 @@ def milp_solve(
     W = float(truck_spec["width_in"])
     H = float(truck_spec["height_in"])
 
+    # Pre-filter: any item that exceeds a truck dimension is impossible to
+    # place — return infeasible immediately rather than building a malformed
+    # MILP whose upBound = W - item_w < 0 silently lets the solver place
+    # the box out of bounds at y=0 (QA Lead audit finding — exposed by
+    # 110 in wide SKU in 97 in truck).
+    oversized = []
+    for it in items:
+        if it["d"] > L + EPS or it["w"] > W + EPS or it["h"] > H + EPS:
+            oversized.append(it)
+    if oversized:
+        return MilpResult(
+            fits=False, fitted_count=0, requested_count=n,
+            placements=[],
+            unfitted_detail=[
+                {"model_code": it["model_code"], "quantity": 1}
+                for it in oversized
+            ],
+            x_used_in=L, solve_time_s=time.monotonic() - start,
+            status="Oversized-SKU", is_provable_optimal=True, objective_value=L,
+        )
+
     if n == 0:
         return MilpResult(
             fits=True, fitted_count=0, requested_count=0,
@@ -354,12 +376,30 @@ def milp_solve(
             )
 
     # ── Solve with CBC ──────────────────────────────────────────────────
-    solver = pulp.PULP_CBC_CMD(
-        msg=int(msg),
-        timeLimit=time_limit_s,
-        warmStart=used_warm_start,
-    )
-    status_code = prob.solve(solver)
+    # CBC ships inside the PuLP wheel and is bundled into the .exe via
+    # PyInstaller's collect_all("pulp"). On a corp Windows machine where
+    # Defender quarantines cbc.exe the subprocess call raises
+    # FileNotFoundError; PulpSolverError covers missing-license edge cases
+    # for commercial solvers. We catch both and surface a clean fallback
+    # status so the router (or app) can re-route to SA/heuristic without
+    # the dispatcher seeing a raw traceback.
+    try:
+        solver = pulp.PULP_CBC_CMD(
+            msg=int(msg),
+            timeLimit=time_limit_s,
+            warmStart=used_warm_start,
+        )
+        status_code = prob.solve(solver)
+    except (pulp.PulpSolverError, FileNotFoundError, OSError) as exc:
+        elapsed = time.monotonic() - start
+        return MilpResult(
+            fits=False, fitted_count=0, requested_count=n,
+            placements=[],
+            unfitted_detail=[{"model_code": it["model_code"], "quantity": 1} for it in items],
+            x_used_in=L, solve_time_s=elapsed,
+            status=f"Solver-unavailable ({type(exc).__name__})",
+            is_provable_optimal=False, objective_value=L,
+        )
     elapsed = time.monotonic() - start
 
     pulp_status = pulp.LpStatus[status_code]

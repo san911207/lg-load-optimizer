@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>Fix 1 — 작업자 효율 (SA 카테고리 클러스터링)</title>
+<style>
+  :root {
+    --bg: #F7F8FA; --surface: #FFFFFF; --border: #E5E7EB;
+    --text: #111827; --text-secondary: #4B5563; --text-tertiary: #6B7280;
+    --accent: #2563EB; --accent-bg: #EFF6FF;
+    --success: #047857; --success-bg: #ECFDF5;
+    --warning: #B45309; --warning-bg: #FFFBEB;
+    --danger: #B91C1C; --danger-bg: #FEF2F2;
+    --lg-red: #A50034;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 13px/1.5 -apple-system, "Segoe UI", "Inter", "Pretendard", system-ui, sans-serif; background: var(--bg); color: var(--text); padding: 28px; }
+  .frame { max-width: 1280px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--text-secondary); margin-bottom: 24px; }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; }
+  .panel.before { border-left: 4px solid var(--danger); }
+  .panel.after { border-left: 4px solid var(--success); }
+  .panel h2 { margin: 0 0 6px; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+  .panel.before h2 { color: var(--danger); }
+  .panel.after h2 { color: var(--success); }
+  .panel .tag { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; padding: 2px 8px; border-radius: 4px; }
+  .panel.before .tag { background: var(--danger-bg); color: var(--danger); }
+  .panel.after .tag { background: var(--success-bg); color: var(--success); }
+  .truck-viz {
+    margin: 14px 0;
+    background: linear-gradient(180deg, #FAFBFC 0%, #F3F4F6 100%);
+    border: 1px solid var(--border); border-radius: 8px;
+    height: 130px; position: relative; overflow: hidden;
+  }
+  .truck-frame { position: absolute; left: 14px; right: 14px; top: 14px; bottom: 14px; border: 2px solid #374151; border-radius: 3px; }
+  .b { position: absolute; border: 0.7px solid rgba(31,41,55,0.45); border-radius: 1px; font-size: 7px; text-align: center; line-height: 1; padding-top: 4px; font-weight: 700; color: rgba(0,0,0,0.65); }
+  .b.fridge { background: #85B7EB; }
+  .b.dryer  { background: #F4C0D1; }
+  .b.washer { background: #ED93B1; }
+  .b.column { background: #6366F1; color: white; }
+  .b.dish   { background: #AFA9EC; }
+  .b.micro  { background: #FBBF24; }
+
+  .kpi-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+  .kpi { background: #FAFBFC; border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px; }
+  .kpi .l { font-size: 9px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; }
+  .kpi .v { font-size: 18px; font-weight: 700; margin-top: 2px; letter-spacing: -0.3px; }
+  .kpi .s { font-size: 10px; color: var(--text-tertiary); }
+  .panel.after .kpi.highlight .v { color: var(--success); }
+  .panel.after .kpi.highlight { background: var(--success-bg); border-color: var(--success); }
+
+  .walks { margin-top: 14px; padding: 10px 12px; background: #F9FAFB; border-radius: 8px; font-size: 12px; }
+  .walks b { color: var(--text); }
+  .walks .step { display: inline-block; background: white; border: 1px solid var(--border); padding: 2px 8px; border-radius: 4px; margin: 2px; font-size: 11px; }
+  .walks .step.bad { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); }
+  .walks .step.good { background: var(--success-bg); color: var(--success); border-color: var(--success); }
+
+  .formula {
+    background: #F9FAFB; border: 1px dashed var(--border); border-radius: 8px;
+    padding: 12px 14px; margin-top: 22px;
+    font-family: ui-monospace, SF Mono, monospace; font-size: 12px; line-height: 1.7;
+    color: var(--text);
+  }
+  .formula .comment { color: var(--text-tertiary); }
+  .formula .kw { color: var(--accent); font-weight: 700; }
+  .formula .new { background: #FEF3C7; padding: 1px 4px; border-radius: 3px; }
+
+  .conclusion { margin-top: 22px; padding: 16px 20px; background: #ECFDF5; border: 1px solid #A7F3D0; border-radius: 10px; font-size: 13px; color: #065F46; line-height: 1.7; }
+  .conclusion b { color: #064E3B; }
+  .mock-tag { position: fixed; top: 12px; right: 12px; background: var(--text); color: white; padding: 5px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; opacity: 0.85; }
+</style>
+</head>
+<body>
+<div class="mock-tag">MOCKUP · Fix 1 / 3</div>
+<div class="frame">
+
+  <h1>Fix 1 · 작업자 효율 — SA 카테고리 클러스터링</h1>
+  <p class="sub">SA 목적함수에 <b>카테고리 break 페널티</b> 추가. 장입효율 1순위 보존, 작업자 효율 2순위로 자동 조정.</p>
+
+  <div class="split">
+    <!-- BEFORE -->
+    <div class="panel before">
+      <h2><span class="tag">BEFORE</span> 현재 SA (length-only)</h2>
+
+      <div class="truck-viz">
+        <div class="truck-frame">
+          <!-- 분산된 적재 — 같은 카테고리가 트럭 곳곳에 -->
+          <div class="b fridge"  style="left:1%;top:5%;width:8%;height:85%;">F</div>
+          <div class="b dryer"   style="left:10%;top:30%;width:7%;height:60%;">D</div>
+          <div class="b fridge"  style="left:18%;top:5%;width:8%;height:85%;">F</div>
+          <div class="b column"  style="left:27%;top:5%;width:8%;height:90%;">C</div>
+          <div class="b dryer"   style="left:36%;top:30%;width:7%;height:60%;">D</div>
+          <div class="b washer"  style="left:44%;top:40%;width:7%;height:50%;">W</div>
+          <div class="b dish"    style="left:52%;top:50%;width:7%;height:40%;">DW</div>
+          <div class="b fridge"  style="left:60%;top:5%;width:8%;height:85%;">F</div>
+          <div class="b micro"   style="left:69%;top:70%;width:6%;height:20%;">M</div>
+          <div class="b column"  style="left:76%;top:5%;width:7%;height:90%;">C</div>
+          <div class="b dryer"   style="left:84%;top:30%;width:7%;height:60%;">D</div>
+          <div class="b washer"  style="left:92%;top:40%;width:7%;height:50%;">W</div>
+        </div>
+      </div>
+
+      <div class="kpi-row">
+        <div class="kpi"><div class="l">길이</div><div class="v">19.42 ft</div><div class="s">최소화 ✓</div></div>
+        <div class="kpi"><div class="l">Cluster break</div><div class="v" style="color: var(--danger);">15회</div><div class="s">↑↑↑ 분산</div></div>
+        <div class="kpi"><div class="l">작업자 왕복</div><div class="v" style="color: var(--danger);">15번</div><div class="s">카테고리 당</div></div>
+      </div>
+
+      <div class="walks">
+        <b>작업 시퀀스</b> (작업자 시야):<br>
+        <span class="step bad">F</span><span class="step bad">D</span><span class="step bad">F</span><span class="step bad">C</span><span class="step bad">D</span><span class="step bad">W</span><span class="step bad">DW</span><span class="step bad">F</span><span class="step bad">M</span><span class="step bad">C</span><span class="step bad">D</span><span class="step bad">W</span>
+        <br>↑ 매번 다른 카테고리. 같은 냉장고 3대가 1, 3, 8 번째 → 3번 왕복.
+      </div>
+    </div>
+
+    <!-- AFTER -->
+    <div class="panel after">
+      <h2><span class="tag">AFTER</span> 클러스터링 SA (length + cluster)</h2>
+
+      <div class="truck-viz">
+        <div class="truck-frame">
+          <!-- 그룹된 적재 — 같은 카테고리 묶음 -->
+          <div class="b fridge"  style="left:1%;top:5%;width:8%;height:85%;">F</div>
+          <div class="b fridge"  style="left:10%;top:5%;width:8%;height:85%;">F</div>
+          <div class="b fridge"  style="left:19%;top:5%;width:8%;height:85%;">F</div>
+          <div class="b column"  style="left:28%;top:5%;width:8%;height:90%;">C</div>
+          <div class="b column"  style="left:37%;top:5%;width:7%;height:90%;">C</div>
+          <div class="b washer"  style="left:45%;top:40%;width:7%;height:50%;">W</div>
+          <div class="b dryer"   style="left:45%;top:8%;width:7%;height:30%;">D</div>
+          <div class="b washer"  style="left:53%;top:40%;width:7%;height:50%;">W</div>
+          <div class="b dryer"   style="left:53%;top:8%;width:7%;height:30%;">D</div>
+          <div class="b dish"    style="left:61%;top:50%;width:7%;height:40%;">DW</div>
+          <div class="b dish"    style="left:69%;top:50%;width:7%;height:40%;">DW</div>
+          <div class="b micro"   style="left:77%;top:70%;width:6%;height:20%;">M</div>
+        </div>
+      </div>
+
+      <div class="kpi-row">
+        <div class="kpi"><div class="l">길이</div><div class="v">~20.0 ft</div><div class="s">+0.6 ft (-3%)</div></div>
+        <div class="kpi highlight"><div class="l">Cluster break</div><div class="v">6회</div><div class="s">-60% ✓</div></div>
+        <div class="kpi highlight"><div class="l">작업자 왕복</div><div class="v">6번</div><div class="s">-60% ✓</div></div>
+      </div>
+
+      <div class="walks">
+        <b>작업 시퀀스</b> (작업자 시야):<br>
+        <span class="step good">F·F·F</span><span class="step good">C·C</span><span class="step good">W+D·W+D</span><span class="step good">DW·DW</span><span class="step good">M</span>
+        <br>↑ 같은 카테고리 묶음. 작업자가 카테고리 당 1번씩만 왕복.
+      </div>
+    </div>
+  </div>
+
+  <div class="formula">
+    <span class="comment"># engine/sa_refiner.py · 변경</span><br>
+    <span class="kw">def</span> _objective(pack, n_items, master, cluster_weight=8.0):<br>
+    &nbsp;&nbsp;length_pen = pack.x_used&nbsp;&nbsp;<span class="comment"># 1순위 — 그대로</span><br>
+    &nbsp;&nbsp;unfit_pen = (n_items - pack.fitted_count) * 1e6<br>
+    &nbsp;&nbsp;<span class="new">cluster_pen = _count_cluster_breaks(pack.placements, master) * cluster_weight</span>&nbsp;&nbsp;<span class="comment"># 신규 2순위</span><br>
+    &nbsp;&nbsp;<span class="kw">return</span> length_pen + unfit_pen + cluster_pen<br>
+    <br>
+    <span class="comment"># cluster_weight=8.0 의 의미: 카테고리 break 1번 = 트럭 8 in 늘어난 것과 동일 페널티</span><br>
+    <span class="comment"># SA가 자동 균형: 8 in 절약 위해 break 1개 줄임 / break 1개 늘려 8 in 절약</span>
+  </div>
+
+  <div class="conclusion">
+    <b>최종 효과 예측 (L001 26ft 케이스):</b><br>
+    • 장입 길이 19.42 → 20.0 ft (-3% 효율, but 7.6 ft buffer 여전히 충분)<br>
+    • 카테고리 break 15회 → 6회 (-60%)<br>
+    • 작업자 적재 시간 약 30-40% 단축 (실 측정 필요)<br>
+    • <b>장입효율 1순위 보장 — cluster_weight 조정으로 두 목적 균형 미세 조정 가능</b>
+  </div>
+
+</div>
+</body>
+</html>

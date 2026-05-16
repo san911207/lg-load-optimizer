@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>Fix 3 — 3D 시뮬레이터 개선 (Plotly Option A)</title>
+<style>
+  :root {
+    --bg: #F7F8FA; --surface: #FFFFFF; --border: #E5E7EB;
+    --text: #111827; --text-secondary: #4B5563; --text-tertiary: #6B7280;
+    --accent: #2563EB; --accent-bg: #EFF6FF;
+    --success: #047857; --success-bg: #ECFDF5;
+    --warning: #B45309; --warning-bg: #FFFBEB;
+    --danger: #B91C1C; --danger-bg: #FEF2F2;
+    --lg-red: #A50034;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 13px/1.5 -apple-system, "Segoe UI", "Inter", "Pretendard", system-ui, sans-serif; background: var(--bg); color: var(--text); padding: 24px; }
+  .frame { max-width: 1320px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--text-secondary); margin-bottom: 22px; }
+
+  /* Annotated 3D viz */
+  .viz-card {
+    background: var(--surface); border: 2px solid var(--accent); border-radius: 14px;
+    padding: 16px 18px; position: relative;
+    box-shadow: 0 8px 28px -10px rgba(37,99,235,0.18);
+  }
+
+  .viz-toolbar {
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+    margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px dashed var(--border);
+  }
+  .viz-toolbar h3 { margin: 0 8px 0 0; font-size: 14px; font-weight: 700; }
+  .ctrl-group { display: inline-flex; background: #F3F4F6; border-radius: 6px; padding: 2px; }
+  .ctrl-group button { background: transparent; border: 0; padding: 4px 10px; font-size: 11px; font-weight: 600; color: var(--text-secondary); border-radius: 4px; cursor: pointer; }
+  .ctrl-group button.active { background: white; color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+
+  .ctrl-slider { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 220px; }
+  .ctrl-slider label { font-size: 11px; color: var(--text-tertiary); font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+  .ctrl-slider input { flex: 1; }
+  .ctrl-slider .step-num { background: var(--accent); color: white; font-weight: 700; font-size: 11px; padding: 3px 9px; border-radius: 4px; min-width: 56px; text-align: center; }
+
+  /* Viz canvas */
+  .viz {
+    position: relative; height: 460px;
+    background: linear-gradient(180deg, #FAFBFC 0%, #F3F4F6 100%);
+    border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden;
+  }
+  .truck-frame {
+    position: absolute; left: 40px; right: 40px; top: 60px; bottom: 70px;
+    border: 2.5px solid #374151; border-radius: 5px;
+    transform: perspective(900px) rotateX(18deg) rotateY(-26deg);
+    transform-style: preserve-3d;
+  }
+  .truck-frame::before {
+    content: "FRONT (Cab)"; position: absolute; left: 8px; top: 8px;
+    font-size: 10px; color: #374151; font-weight: 700; letter-spacing: 0.4px;
+  }
+  .truck-frame::after {
+    content: "REAR (Dock)"; position: absolute; right: 8px; bottom: 8px;
+    font-size: 10px; color: var(--danger); font-weight: 700; letter-spacing: 0.4px;
+  }
+  /* Door track zone — hatched red */
+  .door-zone {
+    position: absolute; right: 0; top: 0; bottom: 0; width: 22%;
+    background: repeating-linear-gradient(45deg, rgba(220,38,38,0.18) 0 5px, transparent 5px 10px);
+    border-left: 1px dashed rgba(220,38,38,0.7);
+  }
+  .door-zone-label {
+    position: absolute; right: 4%; top: 4%;
+    font-size: 10px; color: var(--danger); font-weight: 700; letter-spacing: 0.3px;
+    background: rgba(255,255,255,0.85); padding: 2px 6px; border-radius: 3px;
+  }
+
+  .b {
+    position: absolute; border: 1.2px solid rgba(31,41,55,0.5); border-radius: 2px;
+    font-size: 9px; padding: 2px 0 0 3px; font-weight: 700; color: rgba(0,0,0,0.65); line-height: 1.1;
+    transition: 0.15s;
+  }
+  .b.fridge  { background: #85B7EB; }
+  .b.dryer   { background: #F4C0D1; }
+  .b.washer  { background: #ED93B1; }
+  .b.column  { background: #6366F1; color: white; }
+  .b.dish    { background: #AFA9EC; }
+  .b.micro   { background: #FBBF24; }
+
+  .b.selected {
+    border: 3px solid var(--accent) !important;
+    box-shadow: 0 0 0 4px rgba(37,99,235,0.3);
+    z-index: 5;
+  }
+
+  /* Annotation callouts — for mockup explanation */
+  .callout {
+    position: absolute; background: var(--text); color: white;
+    padding: 4px 10px; border-radius: 5px; font-size: 11px; font-weight: 600;
+    z-index: 10;
+  }
+  .callout::before {
+    content: ""; position: absolute; border: 6px solid transparent;
+  }
+  .callout.bottom-right { bottom: -22px; right: -8px; }
+  .callout.top-right { top: -22px; right: -8px; }
+  .callout.bottom-left { bottom: -22px; left: -8px; }
+  .annot {
+    position: absolute; border: 2px dashed #DC2626; border-radius: 6px;
+    pointer-events: none; z-index: 6;
+  }
+  .annot-label {
+    position: absolute; background: #DC2626; color: white;
+    padding: 3px 10px; border-radius: 4px; font-size: 11px; font-weight: 700;
+    z-index: 7;
+  }
+
+  /* Right rail */
+  .grid { display: grid; grid-template-columns: 1fr 320px; gap: 18px; align-items: stretch; }
+  .right-rail { display: flex; flex-direction: column; gap: 14px; }
+  .info-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .info-card h4 { margin: 0 0 8px; font-size: 12px; font-weight: 700; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.5px; }
+  .info-card .row { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 0; }
+  .info-card .row .l { color: var(--text-tertiary); }
+  .info-card .row .v { color: var(--text); font-weight: 600; }
+  .legend { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; font-size: 11px; }
+  .legend label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .legend .sw { width: 12px; height: 12px; border-radius: 2px; }
+
+  /* Watermark — moved to corner */
+  .watermark {
+    position: absolute; bottom: 10px; right: 16px;
+    font-size: 14px; font-weight: 700; color: rgba(0,0,0,0.08);
+    letter-spacing: 0.5px; pointer-events: none;
+    z-index: 4;
+  }
+
+  /* before tag */
+  .before-tag {
+    background: var(--danger-bg); color: var(--danger);
+    padding: 3px 10px; border-radius: 5px; font-size: 11px;
+    font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase;
+    margin-right: 8px;
+  }
+  .after-tag {
+    background: var(--success-bg); color: var(--success);
+    padding: 3px 10px; border-radius: 5px; font-size: 11px;
+    font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase;
+    margin-right: 8px;
+  }
+
+  .checklist {
+    margin-top: 20px; padding: 16px 20px;
+    background: var(--success-bg); border: 1px solid #A7F3D0; border-radius: 10px;
+    font-size: 13px; color: #065F46;
+  }
+  .checklist b { color: #064E3B; }
+  .checklist .item { display: grid; grid-template-columns: 30px 1fr; gap: 8px; margin: 6px 0; align-items: start; line-height: 1.5; }
+  .checklist .item .num { background: var(--success); color: white; border-radius: 50%; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 800; }
+
+  .mock-tag { position: fixed; top: 12px; right: 12px; background: var(--text); color: white; padding: 5px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; opacity: 0.85; }
+</style>
+</head>
+<body>
+<div class="mock-tag">MOCKUP · Fix 3 / 3</div>
+<div class="frame">
+
+  <h1>Fix 3 · 3D 시뮬레이터 개선 (Plotly Option A)</h1>
+  <p class="sub">현재 Plotly 기본 + 워터마크 박스를 가리는 사고. 단계별 슬라이더, 양방향 sync, 깔끔한 도어트랙 zone, 코너 라벨.</p>
+
+  <div class="grid">
+
+    <!-- ── Main 3D card with controls ── -->
+    <div class="viz-card">
+      <div class="viz-toolbar">
+        <h3>3D Load View · 26 ft Penske</h3>
+
+        <div class="ctrl-group">
+          <button class="active">Isometric</button>
+          <button>Side</button>
+          <button>Top</button>
+        </div>
+
+        <div class="ctrl-group">
+          <button>in</button>
+          <button class="active">ft</button>
+        </div>
+
+        <div class="ctrl-slider">
+          <label>Step</label>
+          <input type="range" min="1" max="42" value="14" />
+          <span class="step-num">14 / 42</span>
+        </div>
+
+        <div class="ctrl-group">
+          <button>Reset 📷</button>
+        </div>
+      </div>
+
+      <div class="viz">
+        <div class="watermark">LG Electronics</div>
+        <div class="truck-frame">
+          <div class="door-zone"></div>
+          <div class="door-zone-label">▨ Door track · 87 in cap</div>
+
+          <!-- 14 boxes visible (per slider) — clustered by category -->
+          <div class="b fridge" style="left:3%;top:18%;width:7%;height:62%;">①F</div>
+          <div class="b fridge" style="left:11%;top:18%;width:7%;height:62%;">②F</div>
+          <div class="b fridge" style="left:19%;top:18%;width:7%;height:62%;">③F</div>
+          <div class="b column" style="left:27%;top:10%;width:7%;height:80%;">④C</div>
+          <div class="b column selected" style="left:35%;top:10%;width:7%;height:80%;">⑤C</div>
+          <div class="b washer" style="left:45%;top:42%;width:7%;height:38%;">⑥W</div>
+          <div class="b dryer"  style="left:45%;top:12%;width:7%;height:30%;">⑦D</div>
+          <div class="b washer" style="left:53%;top:42%;width:7%;height:38%;">⑧W</div>
+          <div class="b dryer"  style="left:53%;top:12%;width:7%;height:30%;">⑨D</div>
+          <div class="b dish" style="left:61%;top:50%;width:7%;height:30%;">⑩DW</div>
+          <div class="b dish" style="left:61%;top:18%;width:7%;height:30%;">⑪DW</div>
+          <div class="b micro" style="left:69%;top:60%;width:7%;height:20%;">⑫MV</div>
+          <div class="b micro" style="left:69%;top:38%;width:7%;height:20%;">⑬MV</div>
+          <div class="b micro" style="left:69%;top:16%;width:7%;height:20%;">⑭MV</div>
+
+          <!-- Annotations for the mockup -->
+          <div class="annot" style="left:34%; top:9%; width:9%; height:82%;"></div>
+          <div class="annot-label" style="left:38%; top:-23px;">선택된 박스 · 시퀀스 sync ↑</div>
+        </div>
+      </div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; font-size: 11px; color: var(--text-tertiary);">
+        <div>🖱 Drag = 회전 · Scroll = 확대 · Click box = 시퀀스 sync</div>
+        <div>14 of 42 visible</div>
+      </div>
+    </div>
+
+    <!-- ── Right rail ── -->
+    <div class="right-rail">
+
+      <div class="info-card">
+        <h4>Selected box</h4>
+        <div class="row"><span class="l">SKU</span><span class="v">SKSCR3001P</span></div>
+        <div class="row"><span class="l">카테고리</span><span class="v">SKS Column</span></div>
+        <div class="row"><span class="l">위치</span><span class="v">F-mid · z=0</span></div>
+        <div class="row"><span class="l">크기</span><span class="v">32 × 26 × 88 in</span></div>
+        <div class="row"><span class="l">무게</span><span class="v">420 lb</span></div>
+        <div class="row"><span class="l">Step</span><span class="v">#5 of 42</span></div>
+      </div>
+
+      <div class="info-card">
+        <h4>Categories · click to toggle</h4>
+        <div class="legend">
+          <label><span class="sw" style="background:#85B7EB"></span>Refrigerator</label>
+          <label><span class="sw" style="background:#6366F1"></span>SKS Column</label>
+          <label><span class="sw" style="background:#ED93B1"></span>Washer</label>
+          <label><span class="sw" style="background:#F4C0D1"></span>Dryer</label>
+          <label><span class="sw" style="background:#AFA9EC"></span>Dishwasher</label>
+          <label><span class="sw" style="background:#FBBF24"></span>Microwave</label>
+        </div>
+      </div>
+
+      <div class="info-card">
+        <h4>View options</h4>
+        <div class="row"><span class="l">Door-track zone</span><span class="v">▨ ON</span></div>
+        <div class="row"><span class="l">Box edges</span><span class="v">1.5 px (default)</span></div>
+        <div class="row"><span class="l">Hover detail</span><span class="v">SKU/cat/dim/lb/layer</span></div>
+        <div class="row"><span class="l">Watermark</span><span class="v">Corner 20% opacity</span></div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <div class="checklist">
+    <b>변경 사항 6가지</b>
+    <div class="item"><span class="num">1</span><div><b>워터마크 가운데 → 우하단 작게</b> (opacity 0.2). 박스를 가리지 않음.</div></div>
+    <div class="item"><span class="num">2</span><div><b>카메라 ISO 기본 각도</b> (front-left 1.7, -2.0, 1.0). 정면 90° 대신 보기 좋은 각도 고정.</div></div>
+    <div class="item"><span class="num">3</span><div><b>도어트랙 zone 해치 패턴</b> 빨강 단색 → 45° 줄무늬 + 점선 wireframe. "Door track · 87 in cap" 라벨.</div></div>
+    <div class="item"><span class="num">4</span><div><b>Step slider 1 ~ N</b>: 적재 단계까지만 박스 표시. Walk-through 모드와 연동.</div></div>
+    <div class="item"><span class="num">5</span><div><b>양방향 sync</b>: 박스 클릭 → 우측 Selected 카드 + Walk-through 해당 단계로 자동 이동. 시퀀스 리스트 클릭 → 3D 박스 강조.</div></div>
+    <div class="item"><span class="num">6</span><div><b>단위 토글 (in / ft)</b> + 카테고리 범례 클릭 토글 + FRONT/REAR 라벨 + hover 5줄.</div></div>
+  </div>
+
+</div>
+</body>
+</html>

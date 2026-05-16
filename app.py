@@ -115,10 +115,20 @@ def _writable(d: Path) -> bool:
 
 
 def _resolve_user_data_dir(override: Optional[Path] = None) -> Path:
+    """
+    Walk the candidate list (E:/D:/F: drives → Documents → home) and return
+    the first writable directory. On corp-locked Windows machines where IT
+    policy blocks every candidate (no non-system drives, Documents under
+    redirection, home read-only), fall back to a per-session temp dir so
+    the app still starts — better to lose master persistence than to
+    crash with StopIteration at module import (QA Lead audit finding).
+    """
     for d in _candidate_data_dirs(extra=override):
         if _writable(d):
             return d
-    return _candidate_data_dirs()[-1]
+    import tempfile
+    fallback = Path(tempfile.mkdtemp(prefix="lg_load_optimizer_"))
+    return fallback
 
 
 USER_DATA_DIR = _resolve_user_data_dir()
@@ -394,7 +404,7 @@ if _chosen != st.session_state["locale"]:
     set_locale(_chosen)
     st.rerun()
 st.sidebar.markdown("---")
-st.sidebar.caption("v2 engine · MILP + SA + Heuristic auto-routing")
+st.sidebar.caption("Auto-optimized loading · v2.0")
 
 
 # Initial master + trucks (auto-loads user-saved master if present)
@@ -944,14 +954,24 @@ def build_3d_figure(
             color=palette["stroke"], width=1.2,
         ))
 
-    # Door track (rear 5 ft × top 10") — CLAUDE.md §Critical real-world constraints
+    # Door track (rear 5 ft × top 10") — Phase D polish: stronger fill +
+    # dashed boundary wireframe so it reads on screen AND in a B&W print
+    # screenshot (UX Director audit).
     door_x = L - DOOR_TRACK_LENGTH_IN
     door_z = H - DOOR_TRACK_LOSS_IN
     if door_x >= 0 and door_z >= 0:
         traces.append(_box_mesh(
             door_x, 0, door_z,
             DOOR_TRACK_LENGTH_IN, W, DOOR_TRACK_LOSS_IN,
-            color="#DC2626", opacity=0.22, hovertext="Door track (keep clear)",
+            color="#DC2626", opacity=0.30,
+            hovertext="Door track · 87 in cap (5 ft from rear)",
+        ))
+        # Explicit wireframe outline so the zone is unambiguous even
+        # under low opacity.
+        traces.append(_box_edges(
+            door_x, 0, door_z,
+            DOOR_TRACK_LENGTH_IN, W, DOOR_TRACK_LOSS_IN,
+            color="#B91C1C", width=2, dash="dash",
         ))
 
     # Free space outline after last box
@@ -961,6 +981,24 @@ def build_3d_figure(
             x_used, 0, 0, L - x_used, W, H,
             color="#10B981", width=2, dash="dash",
         ))
+
+    # FRONT / REAR text anchors so the viewer can orient without
+    # reading the axis ticks (Phase D — Forklift Op audit asked for
+    # bigger orientation cues).
+    traces.append(go.Scatter3d(
+        x=[0], y=[W * 0.5], z=[H + 4],
+        mode="text",
+        text=["▶ FRONT (cab)"],
+        textfont=dict(size=14, color="#1F2937", family="Arial Black"),
+        hoverinfo="skip", showlegend=False,
+    ))
+    traces.append(go.Scatter3d(
+        x=[L], y=[W * 0.5], z=[H + 4],
+        mode="text",
+        text=["REAR ◀"],
+        textfont=dict(size=14, color="#B91C1C", family="Arial Black"),
+        hoverinfo="skip", showlegend=False,
+    ))
 
     fig = go.Figure(data=traces)
     fig.update_layout(
@@ -1028,6 +1066,155 @@ def build_zone_breakdown_df(
             "Weight (lb)": int(round(weight_lb)),
         })
     return pd.DataFrame(rows)
+
+
+def render_walkthrough(
+    sim: Dict[str, Any],
+    master: Dict[str, Dict[str, Any]],
+    truck_spec: Dict[str, Any],
+    load_id: str,
+    chosen_key: str,
+) -> None:
+    """Fix 2 — Walk-through modal: one big card per step.
+
+    Replaces the unreadable 24-column side-view grid the Forklift Op
+    audit called out. Track current step in session_state so Prev/Done/
+    Next survive Streamlit reruns.
+    """
+    from engine.pdf_gen_v2 import (
+        _layer_label as _walk_layer_label,
+        _position_label as _walk_position_label,
+    )
+
+    placements = sim.get("placements", [])
+    if not placements:
+        st.info("No items to walk through.")
+        return
+
+    state_key = f"walk_step_{load_id}_{chosen_key}"
+    if state_key not in st.session_state:
+        st.session_state[state_key] = 0
+    step_idx = max(0, min(st.session_state[state_key], len(placements) - 1))
+    cur = placements[step_idx]
+
+    cat = (
+        master.get(cur["model_code"], {}).get("category", "")
+        if master else cur.get("category", "")
+    )
+    weight_lb = float(cur.get("weight_lb", 0))
+    is_heavy = weight_lb >= 150
+    layer_label = _walk_layer_label(cur, placements)
+    pos_label = _walk_position_label(cur)
+
+    # Same-category cluster context — "5 of 6 same-cat" so worker sees
+    # they're still in the same SKU group.
+    same_cat = [
+        p for p in placements
+        if (master.get(p["model_code"], {}).get("category", "") if master else "") == cat
+    ]
+    cat_index = same_cat.index(cur) + 1 if cur in same_cat else 1
+    cat_total = len(same_cat) or 1
+
+    # ── Card ──
+    n = len(placements)
+    heavy_chip = (
+        '<span style="background:#FEF3C7;color:#92400E;padding:3px 10px;'
+        'border-radius:5px;font-size:11px;font-weight:700;margin-right:6px;">'
+        '▲ HEAVY · 2-person lift</span>' if is_heavy else ""
+    )
+    cluster_chip = (
+        f'<span style="background:#EFF6FF;color:#1D4ED8;padding:3px 10px;'
+        f'border-radius:5px;font-size:11px;font-weight:700;margin-right:6px;">'
+        f'🧱 {cat} {cat_index} of {cat_total}</span>' if cat else ""
+    )
+
+    st.markdown(
+        f'<div style="background:linear-gradient(135deg,#FAFBFC,#FFFFFF);'
+        f'border:2px solid #2563EB;border-radius:14px;padding:20px 26px;'
+        f'box-shadow:0 6px 24px -10px rgba(37,99,235,0.18);">'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;'
+        f'padding-bottom:12px;margin-bottom:14px;border-bottom:1px dashed #E5E7EB;">'
+        f'<div style="font-size:13px;color:#6B7280;">Step '
+        f'<span style="color:#2563EB;font-size:22px;font-weight:800;">{step_idx + 1}</span>'
+        f' of <b>{n}</b> · LIFO order</div>'
+        f'<div style="font-size:11px;color:#6B7280;font-weight:600;">'
+        f'{n - step_idx - 1} remaining</div>'
+        f'</div>'
+        f'<div style="font-size:22px;font-weight:800;color:#111827;'
+        f'font-family:ui-monospace,SF Mono,monospace;">📦 {cur["model_code"]}</div>'
+        f'<div style="font-size:13px;color:#4B5563;margin:4px 0 14px;">{cat or "—"}</div>'
+        f'<div style="margin-bottom:12px;">{heavy_chip}{cluster_chip}</div>'
+        f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 24px;'
+        f'padding:14px 0;border-top:1px solid #E5E7EB;border-bottom:1px solid #E5E7EB;">'
+        f'<div><div style="font-size:10px;color:#6B7280;text-transform:uppercase;'
+        f'letter-spacing:0.5px;font-weight:700;">Position</div>'
+        f'<div style="font-size:17px;font-weight:700;color:#111827;margin-top:3px;">'
+        f'{pos_label}</div></div>'
+        f'<div><div style="font-size:10px;color:#6B7280;text-transform:uppercase;'
+        f'letter-spacing:0.5px;font-weight:700;">Layer</div>'
+        f'<div style="font-size:17px;font-weight:700;color:#1D4ED8;margin-top:3px;">'
+        f'{layer_label}</div></div>'
+        f'<div><div style="font-size:10px;color:#6B7280;text-transform:uppercase;'
+        f'letter-spacing:0.5px;font-weight:700;">Weight</div>'
+        f'<div style="font-size:17px;font-weight:700;color:#111827;margin-top:3px;">'
+        f'{int(weight_lb):,} lb</div></div>'
+        f'<div><div style="font-size:10px;color:#6B7280;text-transform:uppercase;'
+        f'letter-spacing:0.5px;font-weight:700;">Size (W × D × H)</div>'
+        f'<div style="font-size:14px;font-weight:600;color:#111827;margin-top:3px;">'
+        f'{cur["dim_y_in"]:g} × {cur["dim_x_in"]:g} × {cur["dim_z_in"]:g} in</div></div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Up-next preview
+    if step_idx + 1 < n:
+        nxt = placements[step_idx + 1]
+        nxt_cat = (
+            master.get(nxt["model_code"], {}).get("category", "")
+            if master else ""
+        )
+        st.markdown(
+            f'<div style="margin-top:8px;padding:10px 14px;background:#F3F4F6;'
+            f'border-radius:8px;font-size:12px;color:#4B5563;">'
+            f'▶ Up next #{step_idx + 2}: '
+            f'<b style="font-family:ui-monospace,SF Mono,monospace;'
+            f'color:#111827;">{nxt["model_code"]}</b> ({nxt_cat})'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div style="margin-top:8px;padding:10px 14px;background:#ECFDF5;'
+            'border-radius:8px;font-size:13px;color:#065F46;font-weight:700;">'
+            '🎉 Last item — load complete after this step.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # Nav buttons
+    nav_cols = st.columns([1, 1, 1, 2])
+    with nav_cols[0]:
+        if st.button("◀ Prev", disabled=step_idx == 0,
+                     use_container_width=True,
+                     key=f"walk_prev_{load_id}_{chosen_key}"):
+            st.session_state[state_key] = step_idx - 1
+            st.rerun()
+    with nav_cols[1]:
+        if st.button("Done ✓",
+                     use_container_width=True,
+                     key=f"walk_done_{load_id}_{chosen_key}"):
+            if step_idx + 1 < n:
+                st.session_state[state_key] = step_idx + 1
+                st.rerun()
+    with nav_cols[2]:
+        if st.button("Next ▶", disabled=step_idx + 1 >= n,
+                     use_container_width=True, type="primary",
+                     key=f"walk_next_{load_id}_{chosen_key}"):
+            st.session_state[state_key] = step_idx + 1
+            st.rerun()
+    with nav_cols[3]:
+        st.progress((step_idx + 1) / n, text=f"{step_idx + 1}/{n}")
 
 
 def render_load_sequence(df_zones: pd.DataFrame) -> None:
@@ -1150,33 +1337,42 @@ def render_step2(
 
     m = sim["metrics"]
     # ── Engine badge + audit summary (v2) ─────────────────────────────
-    engine_label = sim.get("engine", "Heuristic")
+    # Team review (Manager + CPO + Tech Writer): "Heuristic+SA" reads like
+    # "guess" to a non-technical user. Rebrand to outcome-focused labels
+    # — what the engine DID, not which algorithm ran.  (Dashboard D1)
+    engine_internal = sim.get("engine", "Heuristic")
     is_optimal = sim.get("is_provable_optimal", False)
     solve_time = sim.get("solve_time_s", 0)
-    badge_bg, badge_fg, badge_text = "#F3F4F6", "#4B5563", engine_label
     if is_optimal:
-        badge_bg, badge_fg, badge_text = "#FEF3C7", "#B45309", f"★ {engine_label} · Provably optimal"
-    elif "SA" in engine_label:
-        badge_bg, badge_fg, badge_text = "#ECFDF5", "#047857", f"{engine_label} · refined"
+        badge_bg, badge_fg = "#FEF3C7", "#B45309"
+        badge_text = "★ Auto · Proven shortest"
+    elif "SA" in engine_internal:
+        badge_bg, badge_fg = "#ECFDF5", "#047857"
+        badge_text = "Auto · Space-optimized"
+    else:
+        badge_bg, badge_fg = "#F3F4F6", "#4B5563"
+        badge_text = "Auto · Fast arrangement"
 
     pair_ct = sim.get("pair_count", 0)
     blk = sim.get("audit_block_count", 0)
     wrn = sim.get("audit_warn_count", 0)
     audit_chips = ""
     if blk:
+        # D2 — action-oriented BLOCK chip (was "⚠ {n} BLOCK" with no next step)
         audit_chips += (
             f'<span style="background:#FEF2F2;color:#B91C1C;padding:3px 9px;border-radius:5px;'
-            f'font-size:11px;font-weight:600;margin-left:6px;">⚠ {blk} BLOCK</span>'
+            f'font-size:11px;font-weight:600;margin-left:6px;">'
+            f'⚠ {blk} loading rule violation(s) — see findings below</span>'
         )
     if wrn:
         audit_chips += (
             f'<span style="background:#FFFBEB;color:#B45309;padding:3px 9px;border-radius:5px;'
-            f'font-size:11px;font-weight:600;margin-left:6px;">△ {wrn} warn</span>'
+            f'font-size:11px;font-weight:600;margin-left:6px;">△ {wrn} warning(s) — review below</span>'
         )
     if pair_ct:
         audit_chips += (
             f'<span style="background:#EFF6FF;color:#1D4ED8;padding:3px 9px;border-radius:5px;'
-            f'font-size:11px;font-weight:600;margin-left:6px;">⛓ {pair_ct} pair(s)</span>'
+            f'font-size:11px;font-weight:600;margin-left:6px;">⛓ {pair_ct} washer+dryer pair(s)</span>'
         )
     badge_html = (
         f'<div style="margin:6px 0 10px 0;">'
@@ -1198,7 +1394,12 @@ def render_step2(
     # Audit findings expander — visible only when something is flagged.
     findings = sim.get("audit_findings", [])
     if findings:
-        with st.expander(f"⚠ Audit findings ({len(findings)})", expanded=blk > 0):
+        with st.expander(
+            f"⚠ Audit findings ({len(findings)})",
+            # D3 — auto-expand on BOTH blocks and warnings so the
+            # dispatcher cannot miss a yellow flag.
+            expanded=(blk + wrn) > 0,
+        ):
             for f in findings:
                 sev = f.get("severity", "info")
                 color = {"block": "#B91C1C", "warn": "#B45309", "info": "#1D4ED8"}.get(sev, "#6B7280")
@@ -1215,6 +1416,42 @@ def render_step2(
     if not sim["placements"]:
         st.warning("No placements to render. Return to Step 1.")
         return
+
+    # ───── HERO ACTION · Print PDF (D6 — promoted from "6. Downloads") ─────
+    # The dispatcher's primary action after verifying the load is to print
+    # the work order and hand it to the forklift operator. Surfacing the
+    # PDF generation here (not buried under section 6) shortens the
+    # operations workflow by one scroll.
+    from engine.pdf_gen_v2 import generate_work_order_v2
+    pdf_hero_bytes = generate_work_order_v2(
+        sim, load_id=load_id, truck_label=label,
+        truck_spec=truck_spec, master=master,
+    )
+    hero_cols = st.columns([2, 1])
+    with hero_cols[0]:
+        st.markdown(
+            f'<div style="background:linear-gradient(135deg,#FAFBFC,#FFFFFF);'
+            f'border:2px solid #2563EB;border-radius:10px;padding:12px 16px;'
+            f'box-shadow:0 6px 20px -8px rgba(37,99,235,0.18);">'
+            f'<div style="font-size:11px;color:#6B7280;text-transform:uppercase;'
+            f'letter-spacing:0.6px;font-weight:700;margin-bottom:4px;">'
+            f'Ready to load</div>'
+            f'<div style="font-size:15px;font-weight:600;color:#111827;">'
+            f'Print the work order and hand it to the forklift operator.</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    with hero_cols[1]:
+        st.download_button(
+            "🖨 Print PDF work order",
+            pdf_hero_bytes,
+            file_name=f"{load_id}_{chosen_key}_workorder.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+            key=f"pdf_hero_{load_id}_{chosen_key}",
+            type="primary",
+        )
+    st.markdown("---")
 
     # ───── 1. 3D overall view ─────
     st.markdown("##### 1. 3D overall view")
@@ -1275,8 +1512,25 @@ def render_step2(
         for i, ps in enumerate(zones, 1):
             st.markdown(f"{i}. {_zone_category_label(ps, master)} × {len(ps)}")
 
-    # ───── 4. Loading sequence — side-view cards ─────
-    st.markdown("##### 4. Loading sequence (side view)")
+    # ───── 4. Loading sequence — Walk-through OR full grid ─────
+    # Fix 2 — Walk-through modal lets the dispatcher (or worker reading
+    # over their shoulder) step through one item at a time with a big
+    # readable card. Toggle defaults to "Walk-through" because the old
+    # cramped side-view grid was unreadable (Forklift Op audit).
+    st.markdown("##### 4. Loading sequence")
+    seq_mode = st.radio(
+        "View",
+        ["🎯 Walk-through (recommended)", "📋 Full grid"],
+        index=0, horizontal=True,
+        label_visibility="collapsed",
+        key=f"seq_mode_{load_id}_{chosen_key}",
+    )
+    if seq_mode.startswith("🎯"):
+        render_walkthrough(sim, master, truck_spec, load_id, chosen_key)
+        # Skip the legacy side-view grid — covered by walk-through above
+        return
+
+    # Legacy full grid (kept for users who want every step visible at once)
     n_steps = len(zones) + 1
     seq_cols = st.columns(n_steps)
     for zi, ps in enumerate(zones):
@@ -1316,17 +1570,15 @@ def render_step2(
     st.markdown("---")
     st.markdown("##### 6. Downloads")
 
-    # v2 1-page PDF (matches docs/v2-mockups/mockup-pdf-print.html).
-    # Falls back to the legacy multi-page work order if v2 import fails.
-    try:
-        from engine.pdf_gen_v2 import generate_work_order_v2
-        pdf_bytes = generate_work_order_v2(
-            sim, load_id=load_id, truck_label=label,
-            truck_spec=truck_spec, master=master,
-        )
-    except Exception:
-        from engine.pdf_gen import generate_work_order
-        pdf_bytes = generate_work_order(sim, load_id, truck_label=label)
+    # v2 1-page PDF — matches docs/v2-mockups/mockup-pdf-print.html.
+    # No silent fallback: if pdf_gen_v2 fails we surface the error so the
+    # dispatcher knows to refresh / re-export rather than handing the
+    # worker a malformed sheet (Eng Lead finding #4).
+    from engine.pdf_gen_v2 import generate_work_order_v2
+    pdf_bytes = generate_work_order_v2(
+        sim, load_id=load_id, truck_label=label,
+        truck_spec=truck_spec, master=master,
+    )
     excel_bytes = build_simple_excel(sim, load_id, chosen_key, master, trucks_map)
     html_bytes = fig_3d.to_html(include_plotlyjs="cdn", full_html=True).encode("utf-8")
 
@@ -1720,9 +1972,34 @@ if page == "📦 Load Plan":
             )
 
     # Run both simulations via the v2 router (MILP/SA/heuristic auto-routing,
-    # pair-packing, post-pack audit). Cache by load_id + signature so the
-    # solver doesn't re-run when the user tabs between Step 1 and Step 2.
-    sig = (load_id, tuple(sorted((l["model_code"], l["quantity"]) for l in load_lines)))
+    # pair-packing, post-pack audit). Cache by (load_id + order signature +
+    # master fingerprint + trucks fingerprint) so a master upload invalidates
+    # stale results — QA Lead & Eng Lead audit finding (without master_hash
+    # the dispatcher could see fit numbers computed with old SKU dims after
+    # uploading a corrected master, with no visible signal).
+    def _master_fingerprint(m: Dict[str, Dict[str, Any]]) -> int:
+        bits = tuple(
+            (mc, spec.get("width_in"), spec.get("depth_in"), spec.get("height_in"),
+             spec.get("weight_lb"), spec.get("stackable"), spec.get("fragile"))
+            for mc, spec in sorted(m.items())
+            if mc in {l["model_code"] for l in load_lines}
+        )
+        return hash(bits)
+
+    def _trucks_fingerprint(tm: Dict[str, Dict[str, Any]]) -> int:
+        bits = tuple(
+            (k, v.get("length_in"), v.get("width_in"), v.get("height_in"),
+             v.get("max_payload_lb"))
+            for k, v in sorted(tm.items())
+        )
+        return hash(bits)
+
+    sig = (
+        load_id,
+        tuple(sorted((l["model_code"], l["quantity"]) for l in load_lines)),
+        _master_fingerprint(master),
+        _trucks_fingerprint(trucks_map),
+    )
     cache_key = f"sim_{sig}"
     if cache_key not in st.session_state:
         sim_26 = router_solve(load_lines, master, trucks_map["26ft"], time_budget_s=15.0)

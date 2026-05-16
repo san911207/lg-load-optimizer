@@ -60,7 +60,6 @@ a = Analysis(
         "engine.router",
         "engine.domain_rules",
         "engine.explain",
-        "engine.pdf_gen",
         "engine.pdf_gen_v2",
         "engine.email_ui",
         "engine.email_sender",

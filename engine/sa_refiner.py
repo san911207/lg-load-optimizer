@@ -50,6 +50,10 @@ class SaResult:
     initial_x_used_in: float
     initial_fitted_count: int
     elapsed_s: float
+    cluster_breaks: int = 0
+    initial_cluster_breaks: int = 0
+    objective_value: float = 0.0
+    initial_objective_value: float = 0.0
     strategy: str = "SA"
 
 
@@ -84,13 +88,57 @@ def _initial_order(
     return best_order, best_pack
 
 
-def _objective(pack: PackResult, n_items: int, big_penalty: float = 1e6) -> float:
+def _count_cluster_breaks(
+    placements: List[Placement],
+    master: Optional[Dict[str, Dict[str, Any]]],
+) -> int:
+    """Count category transitions in load order.
+
+    "Adjacent in load order" = ordered by the x position they end up in
+    (i.e. the order the forklift will load them). A break is counted any
+    time the category of consecutive items differs.
+
+    Used by the SA objective to nudge same-category items together,
+    saving the forklift driver from walking back and forth (Fix 1).
     """
-    SA objective: trailer length used (lower is better). Unfitted items get
-    a huge penalty so SA gravitates toward orderings where everything fits.
+    if not placements or master is None:
+        return 0
+    sorted_p = sorted(placements, key=lambda p: (p.x, p.z, p.y))
+    breaks = 0
+    prev_cat: Optional[str] = None
+    for p in sorted_p:
+        cat = master.get(p.model_code, {}).get("category", "?")
+        if prev_cat is not None and cat != prev_cat:
+            breaks += 1
+        prev_cat = cat
+    return breaks
+
+
+def _objective(
+    pack: PackResult,
+    n_items: int,
+    master: Optional[Dict[str, Dict[str, Any]]] = None,
+    cluster_weight: float = 8.0,
+    big_penalty: float = 1e6,
+) -> float:
+    """
+    SA objective (Phase C Fix 1):
+
+        length_pen + unfitted * 1e6 + cluster_breaks * cluster_weight
+
+    - length_pen (1st priority) — actual inches of trailer used.
+    - unfitted * 1e6 — keep SA pushing toward full-fit orderings.
+    - cluster_breaks * 8 — group same-category items so the forklift
+      driver walks once per category, not once per item. cluster_weight=8
+      means "1 category break = 8 in of extra trailer length", letting SA
+      auto-balance the two objectives.
     """
     unfitted = n_items - pack.fitted_count
-    return pack.x_used + unfitted * big_penalty
+    cluster_pen = (
+        _count_cluster_breaks(pack.placements, master) * cluster_weight
+        if master is not None else 0.0
+    )
+    return pack.x_used + unfitted * big_penalty + cluster_pen
 
 
 def _perturb(order: List[Dict[str, Any]], rng: random.Random) -> List[Dict[str, Any]]:
@@ -124,6 +172,7 @@ def refine(
     seed: int = 42,
     initial_temp: float = 12.0,
     cooling: float = 0.97,
+    cluster_weight: float = 8.0,
     msg: bool = False,
 ) -> SaResult:
     """
@@ -165,7 +214,25 @@ def refine(
         )
 
     cur_order, cur_pack = _initial_order(base_items, L, W, H)
-    cur_obj = _objective(cur_pack, n_items)
+
+    # Single-item load — SA cannot improve permutation of length 1, so skip
+    # the budget-burning no-op loop and return the heuristic result directly
+    # (QA Lead audit finding — guards against degenerate IndexError on swap).
+    if n_items == 1:
+        return SaResult(
+            placements=cur_pack.placements,
+            x_used_in=cur_pack.x_used,
+            fitted_count=cur_pack.fitted_count,
+            iterations=0, accepted=0, improved=0,
+            initial_x_used_in=cur_pack.x_used,
+            initial_fitted_count=cur_pack.fitted_count,
+            elapsed_s=time.monotonic() - start,
+        )
+
+
+    cur_obj = _objective(cur_pack, n_items, master=master, cluster_weight=cluster_weight)
+    initial_breaks = _count_cluster_breaks(cur_pack.placements, master)
+    initial_obj = cur_obj
 
     best_order = cur_order
     best_pack = cur_pack
@@ -182,7 +249,7 @@ def refine(
         iterations += 1
         cand_order = _perturb(cur_order, rng)
         cand_pack = _pack_with_strategy(cand_order, L, W, H, "SA")
-        cand_obj = _objective(cand_pack, n_items)
+        cand_obj = _objective(cand_pack, n_items, master=master, cluster_weight=cluster_weight)
 
         delta = cand_obj - cur_obj
         if delta < 0:
@@ -219,4 +286,8 @@ def refine(
         initial_x_used_in=initial_x,
         initial_fitted_count=initial_fitted,
         elapsed_s=elapsed,
+        cluster_breaks=_count_cluster_breaks(best_pack.placements, master),
+        initial_cluster_breaks=initial_breaks,
+        objective_value=best_obj,
+        initial_objective_value=initial_obj,
     )

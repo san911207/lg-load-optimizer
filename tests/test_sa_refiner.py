@@ -34,27 +34,26 @@ def test_sa_runs_and_returns_result(sample_data):
 
 
 def test_sa_never_worsens_heuristic(sample_data):
-    """SA must never return a worse (fitted, x_used) than the heuristic seed.
+    """SA must never return a worse OBJECTIVE than the heuristic seed.
 
-    SA's objective penalises unfit items, so a refined solution may have a
-    slightly longer x_used IF it manages to fit more items — that is an
-    improvement, not a regression. The lexicographic check below captures
-    that: SA must fit ≥ as many items, and at equal fit count must not
-    increase trailer length.
+    Phase C added a category-clustering term to the objective. As a
+    result, SA may legitimately accept a longer x_used IF the improvement
+    in cluster breaks (×8 in) outweighs the length cost. The contract
+    is therefore on the *composite objective*, not raw x_used.
     """
     master, trucks, loads = sample_data
     for lid in ("L001", "L002", "L003", "L004"):
         order = loads[loads["load_id"] == lid][["model_code", "quantity"]].to_dict("records")
         r = refine(order, master, trucks["26ft"], time_budget_s=4.0, seed=1)
-        # fitted must be >= initial
+        # fitted must be >= initial (penalty term enforces this)
         assert r.fitted_count >= r.initial_fitted_count, (
             f"SA fit fewer items on {lid}: init={r.initial_fitted_count} best={r.fitted_count}"
         )
-        # if fit count is the same, x_used must not regress
-        if r.fitted_count == r.initial_fitted_count:
-            assert r.x_used_in <= r.initial_x_used_in + 0.01, (
-                f"SA regressed on {lid} same-fit: init={r.initial_x_used_in} best={r.x_used_in}"
-            )
+        # objective_value must not regress (length + 8·breaks combined)
+        assert r.objective_value <= r.initial_objective_value + 0.5, (
+            f"SA objective regressed on {lid}: "
+            f"init={r.initial_objective_value:.2f} best={r.objective_value:.2f}"
+        )
 
 
 def test_sa_improves_l001(sample_data):
@@ -64,6 +63,22 @@ def test_sa_improves_l001(sample_data):
     r = refine(order, master, trucks["26ft"], time_budget_s=5.0, seed=42)
     gain_pct = (r.initial_x_used_in - r.x_used_in) / max(r.initial_x_used_in, 1e-6) * 100
     assert gain_pct >= 1.0, f"Expected SA to improve L001 by ≥1%, got {gain_pct:.2f}%"
+
+
+def test_sa_cluster_breaks_tracked(sample_data):
+    """Phase C — SA must populate cluster_breaks / initial_cluster_breaks
+    in SaResult so the UI can show the worker-efficiency improvement.
+    """
+    master, trucks, loads = sample_data
+    order = loads[loads["load_id"] == "L001"][["model_code", "quantity"]].to_dict("records")
+    r = refine(order, master, trucks["26ft"], time_budget_s=4.0, seed=11)
+    # Fields populated (not the default 0/0 from skipping the budget loop)
+    assert r.initial_cluster_breaks > 0
+    # Cluster breaks should not increase under the new objective
+    assert r.cluster_breaks <= r.initial_cluster_breaks, (
+        f"SA increased cluster breaks: init={r.initial_cluster_breaks} "
+        f"best={r.cluster_breaks}"
+    )
 
 
 def test_sa_deterministic_with_seed(sample_data):

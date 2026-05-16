@@ -66,7 +66,11 @@ def test_explain_optimal_milp_bullet():
         "pair_count": 0, "audit_block_count": 0, "audit_warn_count": 0,
     }
     reasons = explain(result, MASTER_FAKE, TRUCK)
-    assert any("optimal" in r.label.lower() for r in reasons)
+    # Phase B D4 — jargon-free copy: "Mathematically optimal" → "Proven shortest"
+    assert any(
+        ("optimal" in r.label.lower()) or ("shortest" in r.label.lower())
+        for r in reasons
+    )
 
 
 def test_explain_pair_bullet():
@@ -96,7 +100,11 @@ def test_explain_audit_block_warn():
         "pair_count": 0,
     }
     reasons = explain(result, MASTER_FAKE, TRUCK)
-    assert any("BLOCK" in r.label for r in reasons)
+    # Phase B D4 — jargon-free: "Audit BLOCKs detected" → "Loading rule violation(s)"
+    assert any(
+        ("BLOCK" in r.label) or ("violation" in r.label.lower())
+        for r in reasons
+    )
 
 
 def test_explain_html_renders_reasons():
