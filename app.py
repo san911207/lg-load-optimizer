@@ -366,13 +366,35 @@ def apply_calibrations(master_dict: Dict[str, Dict[str, Any]]) -> Dict[str, Dict
 # ─────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="LG Load Optimizer", page_icon="🚛", layout="wide")
 
+# ── Locale (EN default, KO available; v2.0 ships EN+KO only) ───────────
+from engine.i18n import set_locale, t as _t, available_locales
+
+if "locale" not in st.session_state:
+    st.session_state["locale"] = "en"
+set_locale(st.session_state["locale"])
+
 st.sidebar.title("🚛 Load Optimizer")
 page = st.sidebar.radio(
     "Navigation",
     ["📦 Load Plan", "📋 Model Master", "🚛 Truck Master"],
 )
+# Language toggle — sits at the bottom of the sidebar so it doesn't
+# distract from the daily workflow.
+_lang_label = {"en": "🇺🇸 English", "ko": "🇰🇷 한국어"}
+_chosen = st.sidebar.radio(
+    "Language / 언어",
+    options=available_locales(),
+    format_func=lambda c: _lang_label.get(c, c),
+    horizontal=True,
+    index=available_locales().index(st.session_state["locale"]),
+    key="locale_radio",
+)
+if _chosen != st.session_state["locale"]:
+    st.session_state["locale"] = _chosen
+    set_locale(_chosen)
+    st.rerun()
 st.sidebar.markdown("---")
-st.sidebar.caption("Phase 0 · best_packer engine")
+st.sidebar.caption("v2 engine · MILP + SA + Heuristic auto-routing")
 
 
 # Initial master + trucks (auto-loads user-saved master if present)
