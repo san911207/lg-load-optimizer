@@ -8,8 +8,10 @@ from PyInstaller.utils.hooks import collect_all, copy_metadata
 
 datas, binaries, hiddenimports = [], [], []
 
-# Streamlit + frontend stack need their assets and metadata
-for pkg in ("streamlit", "altair", "plotly", "narwhals"):
+# Streamlit + frontend stack need their assets and metadata.
+# pulp bundles the CBC MILP solver binary under pulp/solverdir/cbc/<os>/<arch>/cbc —
+# collect_all pulls that into the bundle so the .exe ships with CBC ready to run.
+for pkg in ("streamlit", "altair", "plotly", "narwhals", "pulp"):
     p_datas, p_binaries, p_hidden = collect_all(pkg)
     datas += p_datas
     binaries += p_binaries
@@ -18,7 +20,7 @@ for pkg in ("streamlit", "altair", "plotly", "narwhals"):
 # Streamlit introspects installed packages — give it metadata
 for pkg in (
     "streamlit", "plotly", "pandas", "numpy", "altair", "openpyxl",
-    "reportlab", "Pillow", "pyarrow", "narwhals", "jinja2",
+    "reportlab", "Pillow", "pyarrow", "narwhals", "jinja2", "pulp",
 ):
     try:
         datas += copy_metadata(pkg)
@@ -53,10 +55,14 @@ a = Analysis(
         "streamlit.delta_generator",
         "engine",
         "engine.best_packer",
+        "engine.milp_solver",
         "engine.pdf_gen",
         "engine.email_ui",
         "engine.email_sender",
         "engine.excel_calculator",
+        "pulp",
+        "pulp.apis",
+        "pulp.apis.coin_api",
     ],
     hookspath=[],
     runtime_hooks=[],

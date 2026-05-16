@@ -1,7 +1,9 @@
 # Core simulation engine
 pandas>=2.2.0
 openpyxl>=3.1.2
-py3dbp>=1.1.2
+
+# MILP exact solver (bundles CBC binary)
+pulp>=3.0.0
 
 # UI
 streamlit>=1.32.0
