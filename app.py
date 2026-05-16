@@ -1127,11 +1127,68 @@ def render_step2(
     label = "26ft Box Truck" if chosen_key == "26ft" else "53ft Dry Van"
 
     m = sim["metrics"]
+    # ── Engine badge + audit summary (v2) ─────────────────────────────
+    engine_label = sim.get("engine", "Heuristic")
+    is_optimal = sim.get("is_provable_optimal", False)
+    solve_time = sim.get("solve_time_s", 0)
+    badge_bg, badge_fg, badge_text = "#F3F4F6", "#4B5563", engine_label
+    if is_optimal:
+        badge_bg, badge_fg, badge_text = "#FEF3C7", "#B45309", f"★ {engine_label} · Provably optimal"
+    elif "SA" in engine_label:
+        badge_bg, badge_fg, badge_text = "#ECFDF5", "#047857", f"{engine_label} · refined"
+
+    pair_ct = sim.get("pair_count", 0)
+    blk = sim.get("audit_block_count", 0)
+    wrn = sim.get("audit_warn_count", 0)
+    audit_chips = ""
+    if blk:
+        audit_chips += (
+            f'<span style="background:#FEF2F2;color:#B91C1C;padding:3px 9px;border-radius:5px;'
+            f'font-size:11px;font-weight:600;margin-left:6px;">⚠ {blk} BLOCK</span>'
+        )
+    if wrn:
+        audit_chips += (
+            f'<span style="background:#FFFBEB;color:#B45309;padding:3px 9px;border-radius:5px;'
+            f'font-size:11px;font-weight:600;margin-left:6px;">△ {wrn} warn</span>'
+        )
+    if pair_ct:
+        audit_chips += (
+            f'<span style="background:#EFF6FF;color:#1D4ED8;padding:3px 9px;border-radius:5px;'
+            f'font-size:11px;font-weight:600;margin-left:6px;">⛓ {pair_ct} pair(s)</span>'
+        )
+    badge_html = (
+        f'<div style="margin:6px 0 10px 0;">'
+        f'<span style="background:{badge_bg};color:{badge_fg};padding:5px 11px;'
+        f'border-radius:6px;font-size:11px;font-weight:700;letter-spacing:0.3px;'
+        f'text-transform:uppercase;">{badge_text}</span>'
+        f'<span style="color:#6B7280;font-size:11px;margin-left:8px;">{solve_time:.1f}s</span>'
+        f'{audit_chips}'
+        f'</div>'
+    )
+    st.markdown(badge_html, unsafe_allow_html=True)
+
     st.caption(
         f"{label} · {sim['fitted_count']}/{sim['requested_count']} units · "
         f"{m['x_used_ft']:.1f} ft used ({m['compactness_pct']:.0f}%)"
         + (f" · {m['remaining_length_ft']:.1f} ft buffer" if sim["fits"] else "")
     )
+
+    # Audit findings expander — visible only when something is flagged.
+    findings = sim.get("audit_findings", [])
+    if findings:
+        with st.expander(f"⚠ Audit findings ({len(findings)})", expanded=blk > 0):
+            for f in findings:
+                sev = f.get("severity", "info")
+                color = {"block": "#B91C1C", "warn": "#B45309", "info": "#1D4ED8"}.get(sev, "#6B7280")
+                st.markdown(
+                    f'<div style="border-left:3px solid {color};padding:6px 10px;margin:4px 0;'
+                    f'background:#FAFAFA;border-radius:0 4px 4px 0;font-size:12px;">'
+                    f'<b style="color:{color};text-transform:uppercase;font-size:10px;">{sev}</b> · '
+                    f'<b>{f.get("rule","")}</b><br>'
+                    f'<span style="color:#4B5563;">{f.get("message","")}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
     if not sim["placements"]:
         st.warning("No placements to render. Return to Step 1.")
@@ -1223,8 +1280,17 @@ def render_step2(
     st.markdown("---")
     st.markdown("##### 6. Downloads")
 
-    from engine.pdf_gen import generate_work_order
-    pdf_bytes = generate_work_order(sim, load_id, truck_label=label)
+    # v2 1-page PDF (matches docs/v2-mockups/mockup-pdf-print.html).
+    # Falls back to the legacy multi-page work order if v2 import fails.
+    try:
+        from engine.pdf_gen_v2 import generate_work_order_v2
+        pdf_bytes = generate_work_order_v2(
+            sim, load_id=load_id, truck_label=label,
+            truck_spec=truck_spec, master=master,
+        )
+    except Exception:
+        from engine.pdf_gen import generate_work_order
+        pdf_bytes = generate_work_order(sim, load_id, truck_label=label)
     excel_bytes = build_simple_excel(sim, load_id, chosen_key, master, trucks_map)
     html_bytes = fig_3d.to_html(include_plotlyjs="cdn", full_html=True).encode("utf-8")
 
