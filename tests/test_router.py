@@ -35,13 +35,15 @@ def test_router_picks_milp_for_small_load(sample_data):
 
 
 def test_router_picks_sa_for_medium_load(sample_data):
-    """L001 (44 items) is too big for MILP, should route to SA(skel) + heuristic."""
+    """L001 (44 items) is too big for MILP — routes to Heuristic+SA refiner."""
     master, trucks, loads = sample_data
     order = loads[loads["load_id"] == "L001"][["model_code", "quantity"]].to_dict("records")
-    r = solve(order, master, trucks["26ft"], time_budget_s=30)
+    r = solve(order, master, trucks["26ft"], time_budget_s=15)
     assert r["fits"] is True
     assert r["fitted_count"] == r["requested_count"]
-    assert r["engine"] == "Heuristic+SA(skel)"
+    assert r["engine"] == "Heuristic+SA"
+    # SA must do at least as well as the heuristic baseline.
+    assert r["metrics"]["x_used_ft"] <= 22.85  # heuristic seed on this load is ~22.83
 
 
 def test_router_envelope_compatible(sample_data):
