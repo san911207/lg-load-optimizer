@@ -22,6 +22,12 @@ import time
 from typing import Any, Dict, List
 
 from engine.best_packer import simulate as heuristic_simulate
+from engine.domain_rules import (
+    Severity,
+    detect_pairs,
+    expand_with_pair_hint,
+    verify,
+)
 from engine.milp_solver import milp_solve, MILP_MAX_ITEMS
 from engine.sa_refiner import refine as sa_refine
 
@@ -64,27 +70,39 @@ def solve(
     start = time.monotonic()
     n_items = sum(int(ol["quantity"]) for ol in order_lines)
 
+    # ── Pre-pack: pair-pack hint so washer+dryer stay adjacent ──────────
+    pair_info = detect_pairs(order_lines, master)
+    pack_lines = expand_with_pair_hint(order_lines, master) if pair_info else list(order_lines)
+
     engine_choice = force_engine or _auto_pick(n_items)
 
     if engine_choice == "milp":
-        m = milp_solve(order_lines, master, truck_spec, time_limit_s=time_budget_s)
+        m = milp_solve(pack_lines, master, truck_spec, time_limit_s=time_budget_s)
         if m.fits and m.fitted_count == n_items:
-            return _wrap_milp(m, order_lines, master, truck_spec, "MILP")
+            return _attach_audit(
+                _wrap_milp(m, pack_lines, master, truck_spec, "MILP"),
+                pair_info, master,
+            )
         # MILP couldn't solve in budget — fall back to SA/heuristic.
         engine_choice = "sa" if n_items <= SA_MAX_ITEMS else "heuristic"
 
     if engine_choice == "sa":
         # Run heuristic for the envelope, then let SA refine the *order*.
-        heur = heuristic_simulate(order_lines, master, truck_spec)
+        heur = heuristic_simulate(pack_lines, master, truck_spec)
         sa_budget = max(2.0, time_budget_s - (time.monotonic() - start))
-        sa = sa_refine(order_lines, master, truck_spec,
+        sa = sa_refine(pack_lines, master, truck_spec,
                        time_budget_s=min(sa_budget, SA_DEFAULT_BUDGET_S))
-        # If SA found a strict improvement, swap placements + metrics in.
-        return _wrap_sa(heur, sa, truck_spec, elapsed=time.monotonic() - start)
+        return _attach_audit(
+            _wrap_sa(heur, sa, truck_spec, elapsed=time.monotonic() - start),
+            pair_info, master,
+        )
 
     # heuristic
-    heur = heuristic_simulate(order_lines, master, truck_spec)
-    return _wrap_heuristic(heur, "Heuristic", elapsed=time.monotonic() - start)
+    heur = heuristic_simulate(pack_lines, master, truck_spec)
+    return _attach_audit(
+        _wrap_heuristic(heur, "Heuristic", elapsed=time.monotonic() - start),
+        pair_info, master,
+    )
 
 
 def _auto_pick(n_items: int) -> str:
@@ -132,6 +150,29 @@ def _wrap_milp(
             "remaining_length_ft": round((L - m.x_used_in) / 12.0, 2),
         },
     }
+
+
+def _attach_audit(
+    result: Dict[str, Any],
+    pair_info: List,
+    master: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Run post-pack verification and attach the findings + pair count."""
+    findings = verify(result.get("placements", []), master)
+    result["pair_count"] = sum(p[2] for p in pair_info)
+    result["audit_findings"] = [
+        {
+            "rule": f.rule,
+            "severity": f.severity.value,
+            "message": f.message,
+            "seq_above": f.seq_above,
+            "seq_below": f.seq_below,
+        }
+        for f in findings
+    ]
+    result["audit_block_count"] = sum(1 for f in findings if f.severity == Severity.BLOCK)
+    result["audit_warn_count"] = sum(1 for f in findings if f.severity == Severity.WARN)
+    return result
 
 
 def _wrap_heuristic(heur, engine_label: str, elapsed: float) -> Dict[str, Any]:
