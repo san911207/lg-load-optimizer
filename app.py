@@ -1528,6 +1528,64 @@ if page == "📦 Load Plan":
             st.code("\n".join(sample))
         st.stop()
 
+    # Dim sanity check — surface SKUs whose dims will be rejected by the engine
+    DOOR_TRACK_IN = 10
+    oversized_for_26 = []
+    oversized_for_53 = []
+    for line in load_lines:
+        mc = line["model_code"]
+        spec = master[mc]
+        w, d, h = spec["width_in"], spec["depth_in"], spec["height_in"]
+        eff_h_26 = trucks_map["26ft"]["height_in"] - DOOR_TRACK_IN
+        eff_h_53 = trucks_map["53ft"]["height_in"] - DOOR_TRACK_IN
+        reasons_26, reasons_53 = [], []
+        # Width along truck width axis
+        if w > trucks_map["26ft"]["width_in"]:
+            reasons_26.append(f"width {w}>{trucks_map['26ft']['width_in']}")
+        if w > trucks_map["53ft"]["width_in"]:
+            reasons_53.append(f"width {w}>{trucks_map['53ft']['width_in']}")
+        # Height vs effective height
+        if h > eff_h_26:
+            reasons_26.append(f"height {h}>{eff_h_26} (eff_H after door track)")
+        if h > eff_h_53:
+            reasons_53.append(f"height {h}>{eff_h_53}")
+        # Depth vs truck length (extreme case)
+        if d > trucks_map["26ft"]["length_in"]:
+            reasons_26.append(f"depth {d}>{trucks_map['26ft']['length_in']}")
+        if d > trucks_map["53ft"]["length_in"]:
+            reasons_53.append(f"depth {d}>{trucks_map['53ft']['length_in']}")
+        if reasons_26:
+            oversized_for_26.append((mc, line["quantity"], w, d, h, "; ".join(reasons_26)))
+        if reasons_53:
+            oversized_for_53.append((mc, line["quantity"], w, d, h, "; ".join(reasons_53)))
+
+    if oversized_for_26 or oversized_for_53:
+        with st.expander(
+            f"🔎 Dim sanity — "
+            f"{len(oversized_for_26)} SKU(s) too big for 26ft, "
+            f"{len(oversized_for_53)} SKU(s) too big for 53ft",
+            expanded=bool(oversized_for_26),
+        ):
+            if oversized_for_26:
+                st.markdown("**Will be rejected by 26ft truck:**")
+                st.dataframe(
+                    pd.DataFrame(oversized_for_26,
+                                 columns=["model_code", "qty", "w_in", "d_in", "h_in", "reason"]),
+                    hide_index=True, use_container_width=True,
+                )
+            if oversized_for_53:
+                st.markdown("**Will be rejected by 53ft truck:**")
+                st.dataframe(
+                    pd.DataFrame(oversized_for_53,
+                                 columns=["model_code", "qty", "w_in", "d_in", "h_in", "reason"]),
+                    hide_index=True, use_container_width=True,
+                )
+            st.caption(
+                "These SKUs have at least one dimension exceeding the truck's interior "
+                "(after the 10 in door-track loss for height). They will appear as "
+                "*unfitted* in the result. Check your Model_Master values."
+            )
+
     # Run both simulations (cache by load_id + signature)
     sig = (load_id, tuple(sorted((l["model_code"], l["quantity"]) for l in load_lines)))
     cache_key = f"sim_{sig}"

@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>LG Load Optimizer v2 · Step 2 Load &amp; Work Order</title>
+<style>
+  :root {
+    --bg: #F7F8FA;
+    --surface: #FFFFFF;
+    --border: #E5E7EB;
+    --border-strong: #D1D5DB;
+    --text: #111827;
+    --text-secondary: #4B5563;
+    --text-tertiary: #9CA3AF;
+    --accent: #2563EB;
+    --accent-bg: #EFF6FF;
+    --success: #047857;
+    --success-bg: #ECFDF5;
+    --warning: #B45309;
+    --warning-bg: #FFFBEB;
+    --danger: #B91C1C;
+    --danger-bg: #FEF2F2;
+    --gold: #B45309;
+    --gold-bg: #FEF3C7;
+    --lg-red: #A50034;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); }
+  body {
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", "Pretendard", system-ui, sans-serif;
+    color: var(--text);
+    padding: 24px;
+  }
+  .frame { max-width: 1320px; margin: 0 auto; }
+
+  /* topbar identical to step1 */
+  .topbar {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 22px;
+    display: flex; align-items: center; gap: 16px; margin-bottom: 14px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; }
+  .brand .dot { width: 22px; height: 22px; border-radius: 6px; background: var(--lg-red); display: inline-flex; align-items: center; justify-content: center; color: white; font-size: 12px; font-weight: 800; }
+  .crumb { color: var(--text-tertiary); font-size: 13px; }
+  .crumb b { color: var(--text); font-weight: 600; }
+  .spacer { flex: 1; }
+  .lang { display: flex; gap: 4px; }
+  .lang button { background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; font-size: 12px; color: var(--text-secondary); cursor: pointer; }
+  .lang button.active { background: var(--text); color: white; border-color: var(--text); }
+  .icon-btn { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); display: flex; align-items: center; justify-content: center; color: var(--text-secondary); cursor: pointer; }
+
+  /* stepper */
+  .stepper { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px 22px; margin-bottom: 14px; display: flex; align-items: center; gap: 28px; }
+  .step { display: flex; align-items: center; gap: 12px; }
+  .step .num { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; background: var(--accent); color: white; }
+  .step.done .num { background: var(--success); }
+  .step .label .t { font-weight: 600; font-size: 13px; }
+  .step .label .s { font-size: 11px; color: var(--text-tertiary); }
+  .stepper .divider { flex: 1; height: 1px; background: var(--border); }
+
+  /* result hero */
+  .hero {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 22px;
+    margin-bottom: 14px;
+    display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
+  }
+  .hero .pill {
+    width: 70px; height: 46px; border-radius: 8px;
+    background: linear-gradient(180deg, var(--lg-red) 0%, #C8004A 60%, var(--lg-red) 100%);
+    color: white; display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; letter-spacing: 0.5px;
+  }
+  .hero h2 { margin: 0; font-size: 16px; }
+  .hero .sub { font-size: 12px; color: var(--text-tertiary); }
+  .hero .stat { display: flex; align-items: baseline; gap: 6px; }
+  .hero .stat .big { font-size: 26px; font-weight: 700; letter-spacing: -0.4px; }
+  .hero .stat .unit { font-size: 13px; color: var(--text-tertiary); font-weight: 500; }
+  .hero .stat .label { font-size: 11px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.6px; font-weight: 600; }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 10px; border-radius: 6px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.3px;
+    text-transform: uppercase;
+  }
+  .badge.gold { background: var(--gold-bg); color: var(--gold); }
+  .badge.success { background: var(--success-bg); color: var(--success); }
+  .badge.accent { background: var(--accent-bg); color: var(--accent); }
+  .badge.gray { background: #F3F4F6; color: var(--text-secondary); }
+
+  /* main grid */
+  .main-grid { display: grid; grid-template-columns: 1.55fr 1fr; gap: 14px; }
+
+  /* 3D card */
+  .viz-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 12px;
+  }
+  .viz-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .viz-head h3 { margin: 0; font-size: 14px; font-weight: 600; }
+  .view-tabs { display: flex; gap: 4px; }
+  .view-tabs button {
+    background: transparent; border: 1px solid var(--border); border-radius: 6px;
+    padding: 4px 10px; font-size: 11px; color: var(--text-secondary); cursor: pointer;
+  }
+  .view-tabs button.active { background: var(--text); color: white; border-color: var(--text); }
+
+  /* fake 3D — isometric ASCII */
+  .viz {
+    position: relative; height: 360px;
+    background: linear-gradient(180deg, #F9FAFB 0%, #F3F4F6 100%);
+    border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden;
+  }
+  .truck-frame {
+    position: absolute; left: 30px; right: 30px; top: 60px; bottom: 60px;
+    border: 2px solid #374151; border-radius: 6px;
+    transform: perspective(900px) rotateX(15deg) rotateY(-26deg);
+    transform-style: preserve-3d;
+    background: rgba(255,255,255,0.4);
+  }
+  .truck-frame::before {
+    content: "FRONT"; position: absolute; left: 6px; top: 6px;
+    font-size: 9px; color: #6B7280; font-weight: 600; letter-spacing: 0.5px;
+  }
+  .truck-frame::after {
+    content: "REAR · DOOR-TRACK 5 ft"; position: absolute; right: 6px; bottom: 6px;
+    font-size: 9px; color: var(--danger); font-weight: 600; letter-spacing: 0.5px;
+  }
+  /* door-track ceiling */
+  .door-zone {
+    position: absolute; right: 0; top: 0; bottom: 0; width: 22%;
+    background: repeating-linear-gradient(45deg, rgba(220,38,38,0.10), rgba(220,38,38,0.10) 6px, transparent 6px, transparent 12px);
+    border-left: 1px dashed rgba(220,38,38,0.5);
+  }
+  /* boxes inside */
+  .b {
+    position: absolute;
+    border: 1px solid rgba(31,41,55,0.4);
+    box-shadow: 0 1px 0 rgba(0,0,0,0.05);
+    border-radius: 2px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 8px; color: rgba(0,0,0,0.5); font-weight: 600;
+  }
+  .b.fridge   { background: #85B7EB; }
+  .b.column   { background: #6366F1; }
+  .b.washer   { background: #ED93B1; }
+  .b.dryer    { background: #F4C0D1; }
+  .b.dish     { background: #AFA9EC; }
+  .b.micro    { background: #FBBF24; }
+  .b.panel    { background: #D1D5DB; }
+  .b.cooktop  { background: #34D399; }
+
+  /* hover hint */
+  .viz-hint {
+    position: absolute; left: 12px; bottom: 8px;
+    font-size: 11px; color: var(--text-tertiary);
+    background: rgba(255,255,255,0.85); padding: 3px 8px; border-radius: 4px;
+  }
+
+  /* legend */
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 11px; color: var(--text-secondary); }
+  .legend .sw { display: inline-flex; align-items: center; gap: 5px; }
+  .legend .dot { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+
+  /* viz footer kpis */
+  .viz-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .viz-kpis .k { background: #F9FAFB; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .viz-kpis .k .l { font-size: 10px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.6px; font-weight: 600; }
+  .viz-kpis .k .v { font-size: 15px; font-weight: 700; margin-top: 2px; }
+  .viz-kpis .k .s { font-size: 10px; color: var(--text-tertiary); }
+
+  /* right column — loading sequence */
+  .seq-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 14px;
+  }
+  .seq-head { display: flex; align-items: center; justify-content: space-between; }
+  .seq-head h3 { margin: 0; font-size: 14px; font-weight: 600; }
+  .seq-progress {
+    font-size: 11px; color: var(--text-tertiary); font-weight: 600;
+  }
+  .seq-progress b { color: var(--text); }
+
+  .seq-current {
+    background: var(--accent-bg);
+    border: 1.5px solid var(--accent);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .seq-current .head { display: flex; align-items: center; justify-content: space-between; }
+  .seq-current .step-no { font-size: 11px; color: var(--accent); font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; }
+  .seq-current h4 { margin: 6px 0 4px; font-size: 16px; font-weight: 700; }
+  .seq-current .cat { font-size: 12px; color: var(--text-secondary); }
+  .seq-current .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; margin-top: 12px; }
+  .seq-current .grid .row { font-size: 12px; }
+  .seq-current .grid .row .l { color: var(--text-tertiary); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+  .seq-current .grid .row .v { color: var(--text); font-weight: 600; margin-top: 1px; }
+
+  .seq-pos {
+    margin-top: 12px;
+    background: white; border-radius: 8px; padding: 10px 12px;
+    display: flex; gap: 12px; align-items: center;
+    border: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .seq-pos .mini {
+    width: 80px; height: 50px;
+    border: 1.5px solid var(--text); border-radius: 4px;
+    position: relative; background: #F9FAFB;
+    flex-shrink: 0;
+  }
+  .seq-pos .mini::after {
+    content: ""; position: absolute;
+    left: 5px; top: 22px; width: 12px; height: 16px;
+    background: var(--accent); border-radius: 1px;
+    box-shadow: 0 0 0 2px rgba(37,99,235,0.25);
+  }
+  .seq-pos .info b { display: block; font-size: 12px; }
+  .seq-pos .info span { font-size: 11px; color: var(--text-tertiary); }
+
+  /* seq nav */
+  .seq-nav { display: flex; gap: 8px; }
+  .seq-nav button {
+    flex: 1; background: white; border: 1px solid var(--border); border-radius: 8px;
+    padding: 9px 12px; font-size: 12px; font-weight: 600; color: var(--text);
+    cursor: pointer;
+  }
+  .seq-nav button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+
+  /* next/up next */
+  .seq-list { display: flex; flex-direction: column; gap: 5px; max-height: 220px; overflow: hidden; }
+  .seq-mini-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; font-size: 12px; border-radius: 6px; }
+  .seq-mini-row:hover { background: #F3F4F6; }
+  .seq-mini-row .n { font-size: 11px; color: var(--text-tertiary); width: 22px; font-weight: 600; text-align: right; }
+  .seq-mini-row .sw { width: 14px; height: 14px; border-radius: 3px; }
+  .seq-mini-row .name { flex: 1; }
+  .seq-mini-row .pos { font-size: 11px; color: var(--text-tertiary); }
+
+  /* why arrangement */
+  .why-card {
+    background: var(--success-bg);
+    border: 1px solid #A7F3D0;
+    border-radius: 12px;
+    padding: 18px 22px;
+    margin-top: 14px;
+  }
+  .why-card h3 { margin: 0 0 10px; font-size: 14px; color: #065F46; display: flex; align-items: center; gap: 8px; }
+  .why-card ul { margin: 0; padding-left: 0; list-style: none; display: grid; gap: 7px; }
+  .why-card li { color: #065F46; font-size: 13px; display: flex; gap: 8px; line-height: 1.5; }
+  .why-card li::before { content: "✓"; color: var(--success); font-weight: 700; }
+
+  /* footer actions */
+  .footer-actions {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 16px; padding: 18px 22px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  }
+  .footer-actions .left { font-size: 12px; color: var(--text-tertiary); }
+  .btn {
+    background: var(--accent); color: white; border: none; border-radius: 8px;
+    padding: 10px 18px; font-size: 13px; font-weight: 600; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .btn.ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+
+  .mockup-label {
+    position: fixed; top: 12px; right: 12px;
+    background: var(--text); color: white; padding: 5px 10px; border-radius: 6px;
+    font-size: 11px; font-weight: 600; opacity: 0.85;
+  }
+</style>
+</head>
+<body>
+<div class="mockup-label">MOCKUP · v2 Step 2</div>
+
+<div class="frame">
+
+  <div class="topbar">
+    <div class="brand"><span class="dot">L</span> LG Load Optimizer</div>
+    <div class="crumb">Plan · <b>Load 18143132</b> · 26 ft Penske</div>
+    <div class="spacer"></div>
+    <div class="lang">
+      <button class="active">EN</button>
+      <button>KO</button>
+    </div>
+    <button class="icon-btn">⚙</button>
+  </div>
+
+  <div class="stepper">
+    <div class="step done">
+      <div class="num">✓</div>
+      <div class="label"><div class="t">Decision</div><div class="s">26 ft chosen</div></div>
+    </div>
+    <div class="divider"></div>
+    <div class="step">
+      <div class="num">2</div>
+      <div class="label"><div class="t">Load &amp; Work Order</div><div class="s">3D view + sequence</div></div>
+    </div>
+  </div>
+
+  <!-- Result hero -->
+  <div class="hero">
+    <div class="pill">26FT</div>
+    <div>
+      <h2>42 of 42 items fit · 18.6 ft used</h2>
+      <div class="sub">71.8% length · 40.1% volume · 67.2% weight</div>
+    </div>
+    <div style="display:flex; gap: 22px; margin-left: auto;">
+      <div class="stat">
+        <div><div class="label">Length</div><div><span class="big">18.6</span><span class="unit">ft</span></div></div>
+      </div>
+      <div class="stat">
+        <div><div class="label">Volume util</div><div><span class="big">40.1</span><span class="unit">%</span></div></div>
+      </div>
+      <div class="stat">
+        <div><div class="label">Weight</div><div><span class="big">6,724</span><span class="unit">lb</span></div></div>
+      </div>
+      <div style="display:flex; align-items:center; gap:6px;">
+        <span class="badge gold">★ Optimal</span>
+        <span class="badge success">CBC MILP</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main grid -->
+  <div class="main-grid">
+
+    <!-- 3D viz -->
+    <div class="viz-card">
+      <div class="viz-head">
+        <h3>3D Load View · 26 ft Penske</h3>
+        <div class="view-tabs">
+          <button class="active">Isometric</button>
+          <button>Side</button>
+          <button>Top</button>
+          <button>Worker</button>
+        </div>
+      </div>
+
+      <div class="viz">
+        <div class="truck-frame">
+          <div class="door-zone"></div>
+          <!-- Front zone (tall columns) -->
+          <div class="b column" style="left:4%; top:18%; width:7%; height:62%;">SKS</div>
+          <div class="b column" style="left:12%; top:18%; width:7%; height:62%;">SKS</div>
+          <div class="b column" style="left:20%; top:18%; width:7%; height:62%;">SKS</div>
+          <div class="b fridge" style="left:28%; top:22%; width:7%; height:58%;">LRE</div>
+          <div class="b fridge" style="left:36%; top:22%; width:7%; height:58%;">LSI</div>
+          <div class="b fridge" style="left:44%; top:22%; width:7%; height:58%;">LRI</div>
+          <!-- Middle (washer+dryer pair) -->
+          <div class="b washer" style="left:52%; top:42%; width:8%; height:38%;">WT8</div>
+          <div class="b dryer"  style="left:52%; top:12%; width:8%; height:30%;">DLG</div>
+          <div class="b washer" style="left:61%; top:42%; width:8%; height:38%;">WM4</div>
+          <div class="b dryer"  style="left:61%; top:12%; width:8%; height:30%;">DLE</div>
+          <!-- Rear (short stackables, ≤87") -->
+          <div class="b dish"  style="left:70%; top:50%; width:7%; height:30%;">SKS</div>
+          <div class="b dish"  style="left:70%; top:18%; width:7%; height:30%;">DW</div>
+          <div class="b micro" style="left:78%; top:60%; width:7%; height:20%;">MV</div>
+          <div class="b micro" style="left:78%; top:38%; width:7%; height:20%;">MV</div>
+          <div class="b micro" style="left:78%; top:16%; width:7%; height:20%;">MV</div>
+          <div class="b panel" style="left:86%; top:18%; width:3%; height:62%;">PK</div>
+          <div class="b cooktop" style="left:90%; top:30%; width:7%; height:40%;">IT</div>
+        </div>
+        <div class="viz-hint">🖱 Drag = rotate · Scroll = zoom · Hover boxes for SKU detail</div>
+      </div>
+
+      <div class="legend">
+        <span class="sw"><span class="dot" style="background:#85B7EB"></span>Refrigerator</span>
+        <span class="sw"><span class="dot" style="background:#6366F1"></span>SKS Column</span>
+        <span class="sw"><span class="dot" style="background:#ED93B1"></span>Washer</span>
+        <span class="sw"><span class="dot" style="background:#F4C0D1"></span>Dryer</span>
+        <span class="sw"><span class="dot" style="background:#AFA9EC"></span>Dishwasher</span>
+        <span class="sw"><span class="dot" style="background:#FBBF24"></span>Microwave</span>
+        <span class="sw"><span class="dot" style="background:#D1D5DB"></span>Panel</span>
+        <span class="sw"><span class="dot" style="background:#34D399"></span>Cooktop</span>
+        <span class="sw" style="margin-left:auto"><span class="dot" style="background:repeating-linear-gradient(45deg, rgba(220,38,38,0.3) 0 3px, transparent 3px 6px), white"></span>Door-track zone (87 in cap)</span>
+      </div>
+
+      <div class="viz-kpis">
+        <div class="k"><div class="l">Loaded</div><div class="v">42/42</div><div class="s">100% fit</div></div>
+        <div class="k"><div class="l">Length used</div><div class="v">18.6 ft</div><div class="s">of 25.9 ft</div></div>
+        <div class="k"><div class="l">Heavy-bottom</div><div class="v">✓ Verified</div><div class="s">all ≥150 lb on z=0</div></div>
+        <div class="k"><div class="l">Solver time</div><div class="v">12.3 s</div><div class="s">CBC optimal</div></div>
+      </div>
+    </div>
+
+    <!-- Loading sequence -->
+    <div class="seq-card">
+      <div class="seq-head">
+        <h3>Loading sequence</h3>
+        <div class="seq-progress">Step <b>1</b> of <b>42</b></div>
+      </div>
+
+      <div class="seq-current">
+        <div class="head">
+          <div class="step-no">Now loading · #1</div>
+          <span class="badge gray">LIFO · last stop first</span>
+        </div>
+        <h4>LRFXS3106S</h4>
+        <div class="cat">Refrigerator · French Door · 26 × 26 × 70 in</div>
+        <div class="grid">
+          <div class="row"><div class="l">Weight</div><div class="v">380 lb</div></div>
+          <div class="row"><div class="l">Layer</div><div class="v">Bottom (z = 0)</div></div>
+          <div class="row"><div class="l">Position</div><div class="v">Front-left</div></div>
+          <div class="row"><div class="l">Orientation</div><div class="v">Standing up</div></div>
+        </div>
+
+        <div class="seq-pos">
+          <div class="mini"></div>
+          <div class="info">
+            <b>Front-left corner</b>
+            <span>x = 0 in · y = 0 in · z = 0 in</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="seq-nav">
+        <button class="ghost">← Prev</button>
+        <button class="primary">Next →</button>
+      </div>
+
+      <div>
+        <div style="font-size:11px; color: var(--text-tertiary); font-weight:600; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px;">Up next</div>
+        <div class="seq-list">
+          <div class="seq-mini-row"><div class="n">#2</div><div class="sw" style="background:#85B7EB"></div><div class="name">LSIL6332FE.PRSLLGA</div><div class="pos">F-mid · z=0</div></div>
+          <div class="seq-mini-row"><div class="n">#3</div><div class="sw" style="background:#85B7EB"></div><div class="name">LRIN6323YE.BSTLLGA</div><div class="pos">F-right · z=0</div></div>
+          <div class="seq-mini-row"><div class="n">#4</div><div class="sw" style="background:#6366F1"></div><div class="name">SKSCR3001P.ASWCNA1</div><div class="pos">F-left · z=0</div></div>
+          <div class="seq-mini-row"><div class="n">#5</div><div class="sw" style="background:#6366F1"></div><div class="name">SKSCR3001P.ASWCNA1</div><div class="pos">F-mid · z=0</div></div>
+          <div class="seq-mini-row"><div class="n">#6</div><div class="sw" style="background:#ED93B1"></div><div class="name">WT8405CW.AEWEUUS</div><div class="pos">M-left · z=0</div></div>
+          <div class="seq-mini-row"><div class="n">#7</div><div class="sw" style="background:#F4C0D1"></div><div class="name">DLG8401BE.AEBEUUS</div><div class="pos">M-left · z=45</div></div>
+          <div class="seq-mini-row"><div class="n">#8</div><div class="sw" style="background:#AFA9EC"></div><div class="name">SKSDW2402P.AASESNA</div><div class="pos">R-left · z=0</div></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Why this arrangement -->
+  <div class="why-card">
+    <h3>💡 Why this arrangement</h3>
+    <ul>
+      <li><b>Heavy items on bottom (z = 0)</b> — all 13 items ≥ 150 lb placed on floor layer for transit stability and warehouse OSHA compliance.</li>
+      <li><b>Tall columns to front zone</b> — 6 SKS columns (88 in) routed to front 21 ft where full 97 in ceiling is available. Rear 5 ft (87 in ceiling, door-track) reserved for short stackables.</li>
+      <li><b>Washer + Dryer pairs grouped</b> — pair-packed for unloading efficiency (2 pairs detected: WT8405CW+DLG8401BE, WM4000HBA+DLEX4000B).</li>
+      <li><b>LIFO unloading order</b> — last delivery stop loaded first (toward truck front). Driver unloads back-to-front matching route sequence.</li>
+      <li><b>Mathematically proven optimal</b> — CBC solver explored 18,420 candidate arrangements; 18.6 ft is provably the shortest possible trailer length for this 42-item load.</li>
+    </ul>
+  </div>
+
+  <!-- Footer actions -->
+  <div class="footer-actions">
+    <div class="left">Engine: CBC MILP + heavy-bottom + LIFO + pair-packing · solved in 12.3 s</div>
+    <div style="display:flex; gap:10px;">
+      <button class="btn ghost">📄 Export PDF Work Order</button>
+      <button class="btn ghost">✉ Email to driver</button>
+      <button class="btn">💾 Save scenario</button>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

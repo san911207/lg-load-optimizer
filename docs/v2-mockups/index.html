@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>LG Load Optimizer v2 · Mockups Index</title>
+<style>
+  :root {
+    --bg: #F7F8FA; --surface: #FFFFFF; --border: #E5E7EB;
+    --text: #111827; --text-secondary: #4B5563; --text-tertiary: #9CA3AF;
+    --accent: #2563EB; --accent-bg: #EFF6FF;
+    --lg-red: #A50034;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, "Segoe UI", "Inter", "Pretendard", system-ui, sans-serif; background: var(--bg); color: var(--text); padding: 32px; }
+  .frame { max-width: 1100px; margin: 0 auto; }
+  .topbar { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 22px; display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; }
+  .brand .dot { width: 22px; height: 22px; border-radius: 6px; background: var(--lg-red); display: inline-flex; align-items: center; justify-content: center; color: white; font-size: 12px; font-weight: 800; }
+  .crumb { color: var(--text-tertiary); font-size: 13px; }
+  h1 { font-size: 26px; margin: 8px 0 6px; letter-spacing: -0.3px; }
+  .subtitle { color: var(--text-secondary); font-size: 14px; margin-bottom: 26px; }
+
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 22px; text-decoration: none; color: var(--text);
+    display: flex; flex-direction: column; gap: 12px;
+    transition: 0.15s; cursor: pointer;
+  }
+  .card:hover { border-color: var(--accent); box-shadow: 0 8px 30px -10px rgba(37, 99, 235, 0.18); transform: translateY(-2px); }
+  .num { width: 38px; height: 38px; border-radius: 10px; background: var(--accent-bg); color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 700; }
+  .card h3 { margin: 0; font-size: 17px; font-weight: 700; }
+  .tag { font-size: 11px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.6px; font-weight: 600; }
+  .desc { font-size: 13px; color: var(--text-secondary); line-height: 1.55; }
+  .open { font-size: 12px; color: var(--accent); font-weight: 600; margin-top: auto; padding-top: 8px; }
+  .open::after { content: " →"; }
+
+  .changes {
+    margin-top: 18px; padding: 16px 20px;
+    background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 10px;
+    font-size: 13px; color: #92400E; line-height: 1.6;
+  }
+  .changes b { color: #78350F; }
+
+  .footer {
+    margin-top: 18px; padding: 22px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 12px;
+    font-size: 13px; color: var(--text-secondary); line-height: 1.7;
+  }
+  .footer b { color: var(--text); }
+  .footer code { background: #F3F4F6; padding: 2px 6px; border-radius: 4px; font-family: ui-monospace, SF Mono, monospace; font-size: 12px; }
+  .check-list { display: grid; gap: 10px; margin-top: 14px; }
+  .check { display: flex; gap: 10px; align-items: flex-start; }
+  .check::before { content: "?"; width: 22px; height: 22px; border-radius: 50%; background: var(--accent-bg); color: var(--accent); display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; flex-shrink: 0; }
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <div class="topbar">
+    <div class="brand"><span class="dot">L</span> LG Load Optimizer v2</div>
+    <div class="crumb">Mockups · Phase 1 design (revised)</div>
+  </div>
+
+  <h1>v2 Dashboard mockups (revised)</h1>
+  <p class="subtitle">CEO 피드백 반영 · 큰 숫자 + 좌우 트럭 비교 + PDF 1장 + 엔진 자동.</p>
+
+  <div class="changes">
+    <b>이번 수정 4건</b><br>
+    ① 막대 작게, 숫자 크게 (Step 1) ②  26ft 왼쪽 / 53ft 오른쪽 좌우 비교 (Step 1) ③ 엔진 선택 화면 삭제 — auto-router를 .exe에 내장 (CBC 바이너리 +12MB 번들) ④ 3D + 적재순서 PDF 1장 인쇄 (US Letter landscape, 11×8.5in)
+  </div>
+
+  <div class="grid">
+
+    <a class="card" href="mockup-step1-decision.html">
+      <div class="num">1</div>
+      <div class="tag">Step 1 of 2 · revised</div>
+      <h3>Decision</h3>
+      <div class="desc">26ft (왼쪽 추천) ↔ 53ft (오른쪽 대안) 좌우 비교. <b>18.6ft</b> 같은 핵심 숫자 64px 빅. 막대는 3px 미니바로 축소.</div>
+      <div class="open">Open Step 1</div>
+    </a>
+
+    <a class="card" href="mockup-step2-load.html">
+      <div class="num">2</div>
+      <div class="tag">Step 2 of 2</div>
+      <h3>Load &amp; Work Order</h3>
+      <div class="desc">3D 뷰 (매니저) + Loading sequence (작업자) 한 화면 통합. "Why this arrangement" 5개 룰.</div>
+      <div class="open">Open Step 2</div>
+    </a>
+
+    <a class="card" href="mockup-pdf-print.html">
+      <div class="num">📄</div>
+      <div class="tag">PRINT · 1-page</div>
+      <h3>PDF Work Order</h3>
+      <div class="desc">US Letter landscape 1장에 3D 뷰 + 측면도 + 42개 적재 순서 + Why 룰 + 서명란 전부. 현장 즉시 인쇄.</div>
+      <div class="open">Open PDF preview</div>
+    </a>
+
+  </div>
+
+  <div class="footer">
+    <b>컨펌 요청 항목:</b>
+    <div class="check-list">
+      <div class="check">Step 1 좌우 트럭 비교 + 큰 숫자 OK?</div>
+      <div class="check">PDF 1장에 3D + 측면도 + 순서 + Why + 서명란 다 들어간거 OK?</div>
+      <div class="check">엔진 자동 라우팅 (.exe 내장, CBC +12MB) OK?</div>
+      <div class="check">수정 필요한 곳 있으면 어느 화면 어디?</div>
+    </div>
+    <p style="margin-top:18px;">컨펌 후: <code>build #11 (도어트랙 fix) 푸시</code> → <code>Day 1: PuLP + CBC 설치 + MILP 수식</code></p>
+  </div>
+
+</div>
+</body>
+</html>

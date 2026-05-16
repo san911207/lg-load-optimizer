@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>LG Load Optimizer · 1-page PDF Work Order</title>
+<style>
+  /* PDF target: US Letter 11 × 8.5 in landscape, 0.4in margin */
+  :root {
+    --text: #111827; --text-secondary: #4B5563; --text-tertiary: #6B7280;
+    --border: #D1D5DB; --accent: #1D4ED8; --lg-red: #A50034;
+    --success: #047857; --gold: #B45309; --gold-bg: #FEF3C7;
+    --danger: #B91C1C;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #E5E7EB; }
+  body { font: 11px/1.35 -apple-system, "Segoe UI", "Inter", system-ui, sans-serif; color: var(--text); padding: 24px; }
+
+  /* Page = US Letter landscape — 11in × 8.5in @ 96dpi = 1056 × 816 px */
+  .page {
+    width: 1056px; height: 816px;
+    background: white; margin: 0 auto; padding: 28px 32px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.12);
+    display: grid;
+    grid-template-rows: auto auto 1fr auto;
+    gap: 12px;
+  }
+
+  /* Header strip */
+  .header { display: flex; align-items: center; gap: 14px; padding-bottom: 10px; border-bottom: 2px solid var(--text); }
+  .header .brand { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 14px; }
+  .header .brand .dot { width: 22px; height: 22px; border-radius: 5px; background: var(--lg-red); display: inline-flex; align-items: center; justify-content: center; color: white; font-size: 12px; font-weight: 800; }
+  .header h1 { font-size: 16px; font-weight: 700; margin: 0; }
+  .header .meta { margin-left: auto; text-align: right; font-size: 10px; color: var(--text-tertiary); line-height: 1.5; }
+  .header .meta b { color: var(--text); }
+
+  /* Quick summary strip */
+  .summary { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+  .sum-cell { border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; text-align: center; }
+  .sum-cell .l { font-size: 8px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; }
+  .sum-cell .v { font-size: 16px; font-weight: 800; margin-top: 2px; letter-spacing: -0.3px; }
+  .sum-cell .s { font-size: 8px; color: var(--text-tertiary); }
+  .sum-cell.highlight { background: var(--gold-bg); border-color: var(--gold); }
+  .sum-cell.highlight .v { color: var(--gold); }
+
+  /* Main split */
+  .main { display: grid; grid-template-columns: 1.4fr 1fr; gap: 12px; }
+
+  .panel { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; }
+  .panel h3 { margin: 0 0 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: var(--text-tertiary); display: flex; align-items: center; gap: 6px; }
+  .panel h3 .n { background: var(--text); color: white; width: 16px; height: 16px; border-radius: 50%; font-size: 9px; display: inline-flex; align-items: center; justify-content: center; }
+
+  /* 3D viz (left) */
+  .viz {
+    flex: 1; position: relative;
+    background: linear-gradient(180deg, #F9FAFB 0%, #F3F4F6 100%);
+    border: 1px solid var(--border); border-radius: 6px;
+    overflow: hidden;
+    min-height: 280px;
+  }
+  .truck-frame {
+    position: absolute; left: 22px; right: 22px; top: 28px; bottom: 36px;
+    border: 2px solid #374151; border-radius: 4px;
+    transform: perspective(900px) rotateX(15deg) rotateY(-26deg);
+    transform-style: preserve-3d;
+    background: rgba(255,255,255,0.4);
+  }
+  .truck-frame::before {
+    content: "FRONT"; position: absolute; left: 5px; top: 5px;
+    font-size: 8px; color: #6B7280; font-weight: 700;
+  }
+  .truck-frame::after {
+    content: "REAR · DOOR-TRACK"; position: absolute; right: 5px; bottom: 5px;
+    font-size: 8px; color: var(--danger); font-weight: 700;
+  }
+  .door-zone {
+    position: absolute; right: 0; top: 0; bottom: 0; width: 22%;
+    background: repeating-linear-gradient(45deg, rgba(220,38,38,0.10) 0 4px, transparent 4px 8px);
+    border-left: 1px dashed rgba(220,38,38,0.5);
+  }
+  .b {
+    position: absolute; border: 1px solid rgba(31,41,55,0.4); border-radius: 2px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 6px; color: rgba(0,0,0,0.6); font-weight: 700;
+  }
+  .b.fridge { background: #85B7EB; }
+  .b.column { background: #6366F1; color: white; }
+  .b.washer { background: #ED93B1; }
+  .b.dryer  { background: #F4C0D1; }
+  .b.dish   { background: #AFA9EC; }
+  .b.micro  { background: #FBBF24; }
+  .b.panel  { background: #D1D5DB; }
+  .b.cooktop{ background: #34D399; }
+
+  /* numbered labels on boxes */
+  .b .num { position: absolute; top: -2px; left: -2px; background: var(--text); color: white; width: 12px; height: 12px; border-radius: 50%; font-size: 7px; display: flex; align-items: center; justify-content: center; font-weight: 800; }
+
+  /* legend */
+  .legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+  .legend .sw { display: inline-flex; align-items: center; gap: 4px; font-size: 9px; color: var(--text-secondary); }
+  .legend .dot { width: 8px; height: 8px; border-radius: 2px; }
+
+  /* Side-view 2D (left bottom) */
+  .side-view { margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 8px; }
+  .side-view-title { font-size: 9px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; margin-bottom: 4px; }
+  .side-view-box { position: relative; height: 80px; border: 1.5px solid var(--text); border-radius: 3px; background: #FAFBFC; padding: 4px; }
+  .side-view-box .sb {
+    position: absolute; border: 1px solid rgba(31,41,55,0.4); border-radius: 1px;
+    font-size: 6px; display: flex; align-items: center; justify-content: center; color: rgba(0,0,0,0.7); font-weight: 600;
+  }
+  .side-view-box .dz {
+    position: absolute; right: 0; top: 0; bottom: 0; width: 18%;
+    background: repeating-linear-gradient(45deg, rgba(220,38,38,0.10) 0 3px, transparent 3px 6px);
+    border-left: 1px dashed rgba(220,38,38,0.5);
+  }
+  .ruler { display: flex; justify-content: space-between; font-size: 8px; color: var(--text-tertiary); margin-top: 2px; }
+
+  /* Loading sequence (right) */
+  .seq-table { font-size: 9px; border-collapse: collapse; width: 100%; }
+  .seq-table thead th {
+    text-align: left; font-size: 8px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.4px; font-weight: 700;
+    border-bottom: 1px solid var(--border); padding: 4px 4px 4px 0;
+  }
+  .seq-table tbody td { padding: 3px 4px 3px 0; border-bottom: 1px dotted #E5E7EB; vertical-align: middle; line-height: 1.3; }
+  .seq-table .step-no { font-weight: 800; color: var(--text); width: 18px; }
+  .seq-table .cat-dot { width: 9px; height: 9px; border-radius: 2px; display: inline-block; vertical-align: middle; margin-right: 4px; }
+  .seq-table .sku { font-family: ui-monospace, SF Mono, monospace; font-size: 9px; }
+  .seq-table .pos { color: var(--text-tertiary); font-size: 8px; }
+  .seq-table .lay { font-weight: 700; color: var(--text); }
+  .seq-table tbody tr.heavy { background: #FFFBEB; }
+  .seq-table tbody tr.pair td { color: #1E40AF; }
+
+  /* Why bottom strip */
+  .why-strip {
+    background: #ECFDF5; border: 1px solid #A7F3D0; border-radius: 6px;
+    padding: 8px 12px;
+    display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px;
+    font-size: 9px;
+  }
+  .why-strip .item { display: flex; gap: 6px; line-height: 1.4; }
+  .why-strip .item::before { content: "✓"; color: var(--success); font-weight: 800; flex-shrink: 0; }
+  .why-strip .item b { color: #065F46; }
+
+  /* Footer */
+  .foot { display: flex; align-items: center; gap: 12px; font-size: 9px; color: var(--text-tertiary); border-top: 1px solid var(--border); padding-top: 6px; }
+  .foot .sig { margin-left: auto; display: flex; gap: 18px; }
+  .foot .sig-line { border-top: 1px solid var(--text); width: 110px; padding-top: 2px; font-size: 8px; text-transform: uppercase; letter-spacing: 0.4px; }
+
+  /* page label */
+  .page-label { position: fixed; top: 12px; right: 12px; background: var(--text); color: white; padding: 5px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; opacity: 0.9; }
+  .info { max-width: 1056px; margin: 0 auto 12px; font-size: 12px; color: #4B5563; }
+  .info b { color: var(--text); }
+
+  @media print {
+    body { background: white; padding: 0; }
+    .page { box-shadow: none; margin: 0; width: 11in; height: 8.5in; padding: 0.4in; }
+    .page-label, .info { display: none; }
+    @page { size: letter landscape; margin: 0; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page-label">MOCKUP · 1-page Print PDF</div>
+
+<div class="info">
+  <b>1-page Work Order PDF preview</b> — US Letter landscape (11 × 8.5 in). 3D 뷰 + 측면도 + 적재 순서 + Why 룰 한 장에 전부. 현장 인쇄 즉시 사용.
+</div>
+
+<div class="page">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="brand"><span class="dot">L</span> LG Load Optimizer</div>
+    <h1>Work Order · Load 18143132</h1>
+    <div class="meta">
+      <div>Generated: <b>2026-05-15 14:32 PST</b></div>
+      <div>Truck: <b>26 ft Penske · #PNS-3142</b> · Driver: <b>J. Martinez</b></div>
+    </div>
+  </div>
+
+  <!-- SUMMARY STRIP -->
+  <div class="summary">
+    <div class="sum-cell"><div class="l">Items</div><div class="v">42</div><div class="s">100% fit</div></div>
+    <div class="sum-cell highlight"><div class="l">Length</div><div class="v">18.6 ft</div><div class="s">★ optimal</div></div>
+    <div class="sum-cell"><div class="l">Volume</div><div class="v">681 ft³</div><div class="s">40% util</div></div>
+    <div class="sum-cell"><div class="l">Weight</div><div class="v">6,724 lb</div><div class="s">67% util</div></div>
+    <div class="sum-cell"><div class="l">Heavy on bottom</div><div class="v">✓ 13/13</div><div class="s">verified</div></div>
+    <div class="sum-cell"><div class="l">Pairs</div><div class="v">2</div><div class="s">washer+dryer</div></div>
+  </div>
+
+  <!-- MAIN: 3D LEFT, SEQUENCE RIGHT -->
+  <div class="main">
+
+    <!-- LEFT: 3D + Side view -->
+    <div class="panel">
+      <h3><span class="n">A</span> 3D Load View · 26 ft Penske</h3>
+
+      <div class="viz">
+        <div class="truck-frame">
+          <div class="door-zone"></div>
+          <div class="b column" style="left:4%; top:18%; width:7%; height:62%;"><span class="num">4</span>SKS</div>
+          <div class="b column" style="left:12%; top:18%; width:7%; height:62%;"><span class="num">5</span>SKS</div>
+          <div class="b column" style="left:20%; top:18%; width:7%; height:62%;"><span class="num">9</span>SKS</div>
+          <div class="b fridge" style="left:28%; top:22%; width:7%; height:58%;"><span class="num">1</span>LRE</div>
+          <div class="b fridge" style="left:36%; top:22%; width:7%; height:58%;"><span class="num">2</span>LSI</div>
+          <div class="b fridge" style="left:44%; top:22%; width:7%; height:58%;"><span class="num">3</span>LRI</div>
+          <div class="b washer" style="left:52%; top:42%; width:8%; height:38%;"><span class="num">6</span>WT8</div>
+          <div class="b dryer"  style="left:52%; top:12%; width:8%; height:30%;"><span class="num">7</span>DLG</div>
+          <div class="b washer" style="left:61%; top:42%; width:8%; height:38%;">WM4</div>
+          <div class="b dryer"  style="left:61%; top:12%; width:8%; height:30%;">DLE</div>
+          <div class="b dish"  style="left:70%; top:50%; width:7%; height:30%;"><span class="num">8</span>DW</div>
+          <div class="b dish"  style="left:70%; top:18%; width:7%; height:30%;">DW</div>
+          <div class="b micro" style="left:78%; top:60%; width:7%; height:20%;">MV</div>
+          <div class="b micro" style="left:78%; top:38%; width:7%; height:20%;">MV</div>
+          <div class="b micro" style="left:78%; top:16%; width:7%; height:20%;">MV</div>
+          <div class="b panel" style="left:86%; top:18%; width:3%; height:62%;">PK</div>
+          <div class="b cooktop" style="left:90%; top:30%; width:7%; height:40%;">IT</div>
+        </div>
+      </div>
+
+      <div class="legend">
+        <span class="sw"><span class="dot" style="background:#85B7EB"></span>Fridge</span>
+        <span class="sw"><span class="dot" style="background:#6366F1"></span>Column</span>
+        <span class="sw"><span class="dot" style="background:#ED93B1"></span>Washer</span>
+        <span class="sw"><span class="dot" style="background:#F4C0D1"></span>Dryer</span>
+        <span class="sw"><span class="dot" style="background:#AFA9EC"></span>Dishwasher</span>
+        <span class="sw"><span class="dot" style="background:#FBBF24"></span>Microwave</span>
+        <span class="sw"><span class="dot" style="background:#D1D5DB"></span>Panel</span>
+        <span class="sw"><span class="dot" style="background:#34D399"></span>Cooktop</span>
+        <span class="sw" style="margin-left:auto; font-weight:700; color: var(--danger);">▨ Door-track (87 in cap)</span>
+      </div>
+
+      <!-- Side view 2D -->
+      <div class="side-view">
+        <div class="side-view-title">B · Side view (length × height)</div>
+        <div class="side-view-box">
+          <div class="dz"></div>
+          <div class="sb column" style="background:#6366F1; left:1%; bottom:0; width:5%; height:88%; color:white;">88</div>
+          <div class="sb column" style="background:#6366F1; left:7%; bottom:0; width:5%; height:88%; color:white;">88</div>
+          <div class="sb column" style="background:#6366F1; left:13%; bottom:0; width:5%; height:88%; color:white;">88</div>
+          <div class="sb fridge" style="background:#85B7EB; left:19%; bottom:0; width:6%; height:70%;">70</div>
+          <div class="sb fridge" style="background:#85B7EB; left:26%; bottom:0; width:6%; height:70%;">70</div>
+          <div class="sb fridge" style="background:#85B7EB; left:33%; bottom:0; width:6%; height:70%;">70</div>
+          <div class="sb washer" style="background:#ED93B1; left:40%; bottom:0; width:7%; height:45%;">W</div>
+          <div class="sb dryer"  style="background:#F4C0D1; left:40%; bottom:45%; width:7%; height:41%;">D</div>
+          <div class="sb washer" style="background:#ED93B1; left:48%; bottom:0; width:7%; height:45%;">W</div>
+          <div class="sb dryer"  style="background:#F4C0D1; left:48%; bottom:45%; width:7%; height:41%;">D</div>
+          <div class="sb dish"  style="background:#AFA9EC; left:56%; bottom:0; width:6%; height:36%;">DW</div>
+          <div class="sb dish"  style="background:#AFA9EC; left:56%; bottom:36%; width:6%; height:36%;">DW</div>
+          <div class="sb micro" style="background:#FBBF24; left:63%; bottom:0; width:6%; height:20%;">MV</div>
+          <div class="sb micro" style="background:#FBBF24; left:63%; bottom:20%; width:6%; height:20%;">MV</div>
+          <div class="sb micro" style="background:#FBBF24; left:63%; bottom:40%; width:6%; height:20%;">MV</div>
+          <div class="sb panel" style="background:#D1D5DB; left:70%; bottom:0; width:3%; height:62%;">P</div>
+          <div class="sb cooktop" style="background:#34D399; left:74%; bottom:0; width:6%; height:9%;">IT</div>
+        </div>
+        <div class="ruler">
+          <span>0 ft (front)</span><span>5</span><span>10</span><span>15</span><span>18.6 ft used</span><span style="color: var(--danger);">21 ft door track →</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Loading sequence table -->
+    <div class="panel">
+      <h3><span class="n">C</span> Loading Sequence · #1 → #42 (LIFO order)</h3>
+      <table class="seq-table">
+        <thead>
+          <tr><th>#</th><th>SKU</th><th>Pos</th><th>Layer</th><th>Wt</th></tr>
+        </thead>
+        <tbody>
+          <tr class="heavy"><td class="step-no">1</td><td><span class="cat-dot" style="background:#85B7EB"></span><span class="sku">LRFXS3106S</span></td><td class="pos">F-left</td><td class="lay">z=0</td><td>380</td></tr>
+          <tr class="heavy"><td class="step-no">2</td><td><span class="cat-dot" style="background:#85B7EB"></span><span class="sku">LSIL6332FE</span></td><td class="pos">F-mid</td><td class="lay">z=0</td><td>380</td></tr>
+          <tr class="heavy"><td class="step-no">3</td><td><span class="cat-dot" style="background:#85B7EB"></span><span class="sku">LRIN6323YE</span></td><td class="pos">F-right</td><td class="lay">z=0</td><td>380</td></tr>
+          <tr class="heavy"><td class="step-no">4</td><td><span class="cat-dot" style="background:#6366F1"></span><span class="sku">SKSCR3001P</span></td><td class="pos">F-left</td><td class="lay">z=0</td><td>420</td></tr>
+          <tr class="heavy"><td class="step-no">5</td><td><span class="cat-dot" style="background:#6366F1"></span><span class="sku">SKSCR3001P</span></td><td class="pos">F-mid</td><td class="lay">z=0</td><td>420</td></tr>
+          <tr class="pair"><td class="step-no">6</td><td><span class="cat-dot" style="background:#ED93B1"></span><span class="sku">WT8405CW</span> ⛓</td><td class="pos">M-left</td><td class="lay">z=0</td><td>135</td></tr>
+          <tr class="pair"><td class="step-no">7</td><td><span class="cat-dot" style="background:#F4C0D1"></span><span class="sku">DLG8401BE</span> ⛓</td><td class="pos">M-left</td><td class="lay">z=45</td><td>115</td></tr>
+          <tr><td class="step-no">8</td><td><span class="cat-dot" style="background:#AFA9EC"></span><span class="sku">SKSDW2402P</span></td><td class="pos">R-left</td><td class="lay">z=0</td><td>90</td></tr>
+          <tr class="heavy"><td class="step-no">9</td><td><span class="cat-dot" style="background:#6366F1"></span><span class="sku">SKSCF3001P</span></td><td class="pos">F-mid</td><td class="lay">z=0</td><td>410</td></tr>
+          <tr class="heavy"><td class="step-no">10</td><td><span class="cat-dot" style="background:#6366F1"></span><span class="sku">SKSCF2401P</span></td><td class="pos">F-mid</td><td class="lay">z=0</td><td>370</td></tr>
+          <tr class="pair"><td class="step-no">11</td><td><span class="cat-dot" style="background:#ED93B1"></span><span class="sku">WM4000HBA</span> ⛓</td><td class="pos">M-right</td><td class="lay">z=0</td><td>170</td></tr>
+          <tr class="pair"><td class="step-no">12</td><td><span class="cat-dot" style="background:#F4C0D1"></span><span class="sku">DLEX4000B</span> ⛓</td><td class="pos">M-right</td><td class="lay">z=41</td><td>120</td></tr>
+          <tr><td class="step-no">13</td><td><span class="cat-dot" style="background:#AFA9EC"></span><span class="sku">SKSDW2411S</span></td><td class="pos">R-left</td><td class="lay">z=36</td><td>90</td></tr>
+          <tr><td class="step-no">14</td><td><span class="cat-dot" style="background:#AFA9EC"></span><span class="sku">LDNTH753S</span></td><td class="pos">R-mid</td><td class="lay">z=0</td><td>95</td></tr>
+          <tr><td class="step-no">15</td><td><span class="cat-dot" style="background:#FBBF24"></span><span class="sku">MVEM1825X</span></td><td class="pos">R-mid</td><td class="lay">z=70</td><td>45</td></tr>
+          <tr><td class="step-no">16</td><td><span class="cat-dot" style="background:#FBBF24"></span><span class="sku">MVEL2033F</span></td><td class="pos">R-mid</td><td class="lay">z=70</td><td>50</td></tr>
+          <tr><td class="step-no">17</td><td><span class="cat-dot" style="background:#FBBF24"></span><span class="sku">MVEL2137F</span></td><td class="pos">R-mid</td><td class="lay">z=72</td><td>50</td></tr>
+          <tr><td class="step-no">18</td><td><span class="cat-dot" style="background:#D1D5DB"></span><span class="sku">SKSPK305CS</span></td><td class="pos">R-right</td><td class="lay">z=0</td><td>35</td></tr>
+          <tr><td class="step-no">19</td><td><span class="cat-dot" style="background:#34D399"></span><span class="sku">SKSIT3601GE</span></td><td class="pos">R-right</td><td class="lay">z=0</td><td>75</td></tr>
+          <tr style="color: var(--text-tertiary); font-style: italic;"><td colspan="5" style="text-align:center; padding-top:6px;">… 23 more steps (full list on next page)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+
+  <!-- WHY STRIP -->
+  <div class="why-strip">
+    <div class="item"><div><b>Heavy on bottom</b> — 13 items ≥150 lb on z=0</div></div>
+    <div class="item"><div><b>Tall to front</b> — 6 columns (88 in) in front 21 ft zone</div></div>
+    <div class="item"><div><b>Pairs grouped</b> — 2× washer+dryer chained</div></div>
+    <div class="item"><div><b>LIFO route</b> — last stop loaded first</div></div>
+    <div class="item"><div><b>★ Optimal</b> — CBC proves 18.6 ft is minimum</div></div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="foot">
+    <div>Engine: CBC MILP · solved 12.3 s · Heuristic comparison +6.6% · Build v2.0.0</div>
+    <div style="margin-left:auto;">Load 18143132 · Page 1 of 2</div>
+  </div>
+
+</div>
+
+</body>
+</html>

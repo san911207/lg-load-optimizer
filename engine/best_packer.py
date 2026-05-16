@@ -33,7 +33,8 @@ from typing import List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass, field
 
 
-DOOR_TRACK_LOSS_IN = 10     # 10" headroom loss at rear
+DOOR_TRACK_LOSS_IN = 10     # 10" headroom loss at the rear roll-up door track
+DOOR_TRACK_LEN_IN = 60.0    # Rear 5 ft where the door-track lowers the ceiling
 IN_PER_FT = 12.0
 CUIN_PER_CFT = 1728.0
 EPS = 1e-6                  # float tolerance for collision/bounds
@@ -122,12 +123,21 @@ def _collides(x: float, y: float, z: float, dx: float, dy: float, dz: float,
 
 def _pack_with_strategy(
     items: List[Dict[str, Any]],
-    L: float, W: float, H: float,
+    L: float, W: float, H_full: float,
     strategy_name: str,
 ) -> PackResult:
+    """
+    H_full = full truck interior height (e.g. 97" for 26ft).
+    Door-track penalty (10") only applies to the rear 5 ft of the truck
+    (x > L - DOOR_TRACK_LEN_IN). Items placed entirely in the front region
+    can use the full ceiling height. Items reaching into the rear region
+    must fit under H_full - DOOR_TRACK_LOSS_IN.
+    """
     placements: List[Placement] = []
     unfitted_by_model: Dict[str, int] = {}
     extreme_points: List[Tuple[float, float, float]] = [(0.0, 0.0, 0.0)]
+    H_rear = H_full - DOOR_TRACK_LOSS_IN  # effective ceiling in door-track zone
+    rear_threshold = L - DOOR_TRACK_LEN_IN  # x position where door track begins
 
     for it in items:
         d, w, h = it["d"], it["w"], it["h"]
@@ -140,8 +150,14 @@ def _pack_with_strategy(
             x1 = ex + d
             y1 = ey + w
             z1 = ez + h
-            # Bounds: must fit inside truck
-            if x1 > L + EPS or y1 > W + EPS or z1 > H + EPS:
+            # Bounds — width/length always against truck
+            if x1 > L + EPS or y1 > W + EPS:
+                continue
+            # Position-dependent ceiling: if any part of the box crosses into
+            # the rear door-track region, the box must fit under H_rear (87").
+            # Items fully in front (x1 <= rear_threshold) can use H_full (97").
+            max_h_here = H_rear if x1 > rear_threshold + EPS else H_full
+            if z1 > max_h_here + EPS:
                 continue
             # Stackable constraint
             if not stackable and ez > EPS:
@@ -186,7 +202,7 @@ def _pack_with_strategy(
         for new_ep in new_eps:
             nex, ney, nez = new_ep
             # Prune obviously bad EPs: out of bounds or inside an existing box
-            if nex > L - EPS or ney > W - EPS or nez > H - EPS:
+            if nex > L - EPS or ney > W - EPS or nez > H_full - EPS:
                 continue
             if any(p.x + EPS < nex < p.x + p.dim_x - EPS and
                    p.y + EPS < ney < p.y + p.dim_y - EPS and
@@ -258,7 +274,9 @@ def find_best(
     """Try multiple sort orders, pick result with most fitted then shortest length."""
     L = truck_spec["length_in"]
     W = truck_spec["width_in"]
-    H = truck_spec["height_in"] - DOOR_TRACK_LOSS_IN
+    # Pass FULL interior height — the packer applies door-track penalty
+    # only to items reaching the rear 5 ft (position-dependent ceiling).
+    H = truck_spec["height_in"]
 
     base_items = _expand_items(order_lines, master)
 
