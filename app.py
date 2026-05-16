@@ -533,16 +533,46 @@ def render_truck_card(
     with st.container(border=False):
         st.markdown(html, unsafe_allow_html=True)
 
-        c1, c2, c3, c4 = st.columns(4)
         m = sim["metrics"]
         loaded_vol_ft3 = compute_loaded_volume_ft3(sim)
+        # ── Hero stat: Length + Volume side-by-side as BIG numbers ─────
+        truck_len_ft = in_to_ft(truck_spec["length_in"])
+        truck_vol_ft3 = truck_spec.get("cargo_volume_cft", 0)
+        hero_color = "#1D4ED8" if is_recommended else "#6B7280"
+        hero_html = (
+            f'<div style="display:grid;grid-template-columns:1fr 1px 1fr;gap:14px;'
+            f'padding:14px 0 10px 0;border-top:1px solid #E5E7EB;'
+            f'border-bottom:1px solid #E5E7EB;margin:8px 0;align-items:center;">'
+            f'<div style="text-align:center;">'
+            f'<div style="font-size:10px;color:#6B7280;text-transform:uppercase;'
+            f'letter-spacing:0.6px;font-weight:700;margin-bottom:6px;">Linear length</div>'
+            f'<div><span style="font-size:46px;font-weight:800;letter-spacing:-1.6px;'
+            f'line-height:1;color:{hero_color};">{m["x_used_ft"]:.1f}</span>'
+            f'<span style="font-size:16px;font-weight:700;color:#6B7280;margin-left:3px;">ft</span></div>'
+            f'<div style="font-size:11px;color:#6B7280;margin-top:6px;">'
+            f'of <b style="color:#111827;">{truck_len_ft:.1f} ft</b> · '
+            f'headroom <b style="color:#111827;">{max(0,truck_len_ft - m["x_used_ft"]):.1f} ft</b></div>'
+            f'</div>'
+            f'<div style="background:#E5E7EB;width:1px;align-self:stretch;"></div>'
+            f'<div style="text-align:center;">'
+            f'<div style="font-size:10px;color:#6B7280;text-transform:uppercase;'
+            f'letter-spacing:0.6px;font-weight:700;margin-bottom:6px;">Volume</div>'
+            f'<div><span style="font-size:46px;font-weight:800;letter-spacing:-1.6px;'
+            f'line-height:1;color:{hero_color};">{loaded_vol_ft3:,.0f}</span>'
+            f'<span style="font-size:16px;font-weight:700;color:#6B7280;margin-left:3px;">ft³</span></div>'
+            f'<div style="font-size:11px;color:#6B7280;margin-top:6px;">'
+            f'of <b style="color:#111827;">{truck_vol_ft3:,.0f} ft³</b> · '
+            f'<b style="color:#111827;">{m.get("volume_util_pct", 0):.1f}%</b> util</div>'
+            f'</div>'
+            f'</div>'
+        )
+        st.markdown(hero_html, unsafe_allow_html=True)
+
+        # Compact secondary row — units + weight (length/volume are in the hero).
+        c1, c2 = st.columns(2)
         with c1:
             st.metric("Units", f"{sim['fitted_count']}/{sim['requested_count']}")
         with c2:
-            st.metric("Length (ft)", f"{m['x_used_ft']:.1f}")
-        with c3:
-            st.metric("Volume (ft³)", f"{loaded_vol_ft3:,.0f}")
-        with c4:
             st.metric("Weight (lb)", f"{m['weight_total_lb']:,.0f}")
 
         st.markdown(
