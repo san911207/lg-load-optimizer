@@ -64,6 +64,7 @@ a = Analysis(
         "engine.pdf_gen_v4",
         "engine.zone_aggregator",
         "engine.demote_layer",
+        "engine.categorizer",
         "engine.email_ui",
         "engine.email_sender",
         "engine.excel_calculator",

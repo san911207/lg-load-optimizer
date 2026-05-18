@@ -1769,6 +1769,111 @@ def _step_range_label(ps: List[Dict[str, Any]]) -> str:
 # render_step2 is kept above for emergency rollback.
 
 
+def _build_stage_mini_view(
+    sim: Dict[str, Any],
+    truck_spec: Dict[str, Any],
+    stages_so_far: list,
+    current_stage_idx: int,
+) -> "go.Figure":
+    """Build one mini side-view (length × height) for stage card N.
+
+    Truck silhouette + door-track zone + per-item rectangles. Items in
+    stages BEFORE the current one render dim grey (already loaded);
+    items in the current stage render in their category colour
+    (loading NOW); future-stage items aren't drawn.
+    """
+    import plotly.graph_objects as go
+    L = float(truck_spec["length_in"])
+    H = float(truck_spec["height_in"])
+    DT_LEN = 60.0
+    DT_LOSS = 10.0
+
+    placements = sim.get("placements", [])
+    cat_color = {
+        "refrigerator": "#85B7EB", "washer": "#ED93B1", "dryer": "#F4C0D1",
+        "washer_dryer_pair": "#E89BB0", "dishwasher": "#AFA9EC",
+        "microwave": "#FBBF24", "oven": "#F4A07A", "tv": "#60A5FA",
+        "monitor": "#22D3EE", "av": "#34D399", "ac": "#5EEAD4",
+        "other": "#D1D5DB",
+    }
+
+    shapes = []
+    # Truck silhouette
+    shapes.append(dict(
+        type="rect", x0=0, y0=0, x1=L, y1=H,
+        line=dict(color="#374151", width=2), fillcolor="rgba(250,251,252,0)",
+        layer="below",
+    ))
+    # Door-track zone (red wash)
+    shapes.append(dict(
+        type="rect",
+        x0=L - DT_LEN, y0=H - DT_LOSS, x1=L, y1=H,
+        line=dict(color="#B91C1C", width=1, dash="dash"),
+        fillcolor="rgba(220,38,38,0.32)", layer="below",
+    ))
+
+    # Per-stage cumulative items
+    cumulative_seqs: set = set()
+    for stg_idx, stg in enumerate(stages_so_far[: current_stage_idx + 1]):
+        stg_seqs: set = set()
+        for zn in stg.zones:
+            stg_seqs |= set(zn.item_seqs)
+        new_seqs = stg_seqs - cumulative_seqs
+        cumulative_seqs |= stg_seqs
+        is_current = (stg_idx == current_stage_idx)
+        if stg.zones:
+            broad = stg.zones[0].broad_category
+        else:
+            broad = "other"
+        if is_current:
+            fill = cat_color.get(broad, "#D1D5DB")
+            line_col = "#111827"
+            line_w = 1.4
+        else:
+            fill = "#E5E7EB"          # dim grey for already-loaded
+            line_col = "#9CA3AF"
+            line_w = 0.6
+        for p in placements:
+            if p.get("seq") not in new_seqs:
+                continue
+            shapes.append(dict(
+                type="rect",
+                x0=p["x_in"], y0=p["z_in"],
+                x1=p["x_in"] + p["dim_x_in"],
+                y1=p["z_in"] + p["dim_z_in"],
+                line=dict(color=line_col, width=line_w),
+                fillcolor=fill, layer="above",
+            ))
+
+    fig = go.Figure()
+    fig.update_layout(
+        shapes=shapes,
+        xaxis=dict(
+            range=[-5, L + 5], visible=False, scaleanchor=None,
+            fixedrange=True,
+        ),
+        yaxis=dict(
+            range=[-5, H + 18], visible=False, scaleratio=1,
+            scaleanchor="x", fixedrange=True,
+        ),
+        height=130,
+        margin=dict(l=4, r=4, t=4, b=4),
+        paper_bgcolor="white",
+        plot_bgcolor="#FAFBFC",
+        showlegend=False,
+    )
+    # Cab / Dock anchor labels via annotations
+    fig.add_annotation(
+        x=0, y=-3, text="Cab", showarrow=False,
+        font=dict(size=9, color="#6B7280"), xanchor="left",
+    )
+    fig.add_annotation(
+        x=L, y=-3, text="Dock", showarrow=False,
+        font=dict(size=9, color="#B91C1C"), xanchor="right",
+    )
+    return fig
+
+
 def _kpi_cell_html(label: str, value: str, sub: str, kind: str = "neutral") -> str:
     """Return one HTML <div> for the KPI strip."""
     palette = {
@@ -2113,48 +2218,103 @@ def render_step2_v4(
         "monitor": "Top-of-package impact-sensitive.",
         "washer_dryer_pair": "Pair-mate items — load adjacent.",
     }
+    # Position-zone for "where to load" hint
+    def _position_hint(stage) -> str:
+        if not stage.zones:
+            return ""
+        zps = []
+        seqs = set()
+        for zn in stage.zones:
+            seqs |= set(zn.item_seqs)
+        for p in placements:
+            if p.get("seq") in seqs:
+                zps.append(p)
+        if not zps:
+            return ""
+        avg_x = sum(p["x_in"] for p in zps) / len(zps)
+        truck_len = truck_spec["length_in"]
+        zone_x = ("Front" if avg_x < truck_len * 0.33
+                  else "Middle" if avg_x < truck_len * 0.66
+                  else "Rear")
+        avg_z = sum(p["z_in"] for p in zps) / len(zps)
+        tier = "Floor" if avg_z < 1 else f"Layer {int(avg_z / max(zps[0].get('dim_z_in', 1), 1)) + 1}"
+        return f"{zone_x} · {tier}"
+
+    total_units = sum(s.units for s in stages[:5])
+    cum_units = 0
+
     n = min(5, len(stages))
     stage_cols = st.columns(max(n, 1))
     for i in range(n):
         s = stages[i]
         broad = s.zones[0].broad_category if s.zones else "other"
         col = cat_colors_html.get(broad, "#D1D5DB")
-        crew_chip = (
-            f'<span style="background:#FEF3C7;color:#92400E;padding:2px 8px;'
-            f'border-radius:3px;font-size:10px;font-weight:700;">{s.crew}P</span>'
-            if s.crew == 2 else
-            f'<span style="background:#ECFDF5;color:#065F46;padding:2px 8px;'
-            f'border-radius:3px;font-size:10px;font-weight:700;">{s.crew}P</span>'
-        )
+        crew_color = ("#FEF3C7", "#92400E") if s.crew == 2 else ("#ECFDF5", "#065F46")
         title = _stage_title(s)
         safety = safety_map.get(broad, "")
-        card_html = (
-            f'<div style="background:white;border:1px solid #D1D5DB;border-radius:5px;'
-            f'padding:9px 11px;display:flex;flex-direction:column;height:100%;">'
-            f'<div style="display:flex;align-items:center;gap:6px;">'
-            f'<div style="background:{col};color:white;width:22px;height:22px;'
-            f'border-radius:50%;display:flex;align-items:center;justify-content:center;'
-            f'font-weight:800;font-size:11px;">{s.step_no}</div>'
-            f'<div style="flex:1;font-size:12px;font-weight:700;color:#111827;'
-            f'line-height:1.2;">{title}</div>'
-            f'{crew_chip}'
-            f'</div>'
-            f'<div style="font-size:11px;color:#374151;margin-top:8px;">'
-            f'{s.units} units · {s.unit_weight_lb} lb each<br>'
-            f'<span style="font-family:ui-monospace,SF Mono,monospace;font-size:10px;'
-            f'color:#6B7280;">{s.layout}</span></div>'
-            f'<div style="font-size:11px;font-weight:700;color:#111827;margin-top:4px;">'
-            f'~{s.estimated_min} min · cum {s.cumulative_lift_lb_per_person:,} lb '
-            f'{s.crew}P</div>'
-        )
-        if safety:
-            card_html += (
-                f'<div style="font-size:10px;color:#991B1B;margin-top:4px;'
-                f'font-weight:600;">! {safety}</div>'
-            )
-        card_html += '</div>'
+        pos = _position_hint(s)
+        cum_units += s.units
+        progress_pct = int(cum_units / max(total_units, 1) * 100)
+
         with stage_cols[i]:
-            st.markdown(card_html, unsafe_allow_html=True)
+            # Header — step # + title + crew chip
+            st.markdown(
+                f'<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">'
+                f'<div style="background:{col};color:white;width:24px;height:24px;'
+                f'border-radius:50%;display:flex;align-items:center;justify-content:center;'
+                f'font-weight:800;font-size:12px;">{s.step_no}</div>'
+                f'<div style="flex:1;font-size:13px;font-weight:700;color:#111827;'
+                f'line-height:1.2;">{title}</div>'
+                f'<span style="background:{crew_color[0]};color:{crew_color[1]};padding:2px 8px;'
+                f'border-radius:3px;font-size:10px;font-weight:700;">{s.crew}P</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            # Mini side-view — truck + door track + per-item progressive fill
+            fig_mini = _build_stage_mini_view(sim, truck_spec, stages, i)
+            st.plotly_chart(
+                fig_mini, use_container_width=True,
+                config={"displayModeBar": False},
+                key=f"stage_mini_{load_id}_{chosen_key}_{i}",
+            )
+            # Action line — where to load (Front/Middle/Rear · Floor/Layer N)
+            if pos:
+                st.markdown(
+                    f'<div style="background:#EFF6FF;border:1px solid #BFDBFE;'
+                    f'border-radius:4px;padding:6px 8px;margin-bottom:6px;font-size:12px;'
+                    f'color:#1E40AF;font-weight:600;">'
+                    f'📍 Load to: <b>{pos}</b></div>',
+                    unsafe_allow_html=True,
+                )
+            # Stats
+            st.markdown(
+                f'<div style="font-size:11px;color:#374151;line-height:1.5;">'
+                f'<b>{s.units} units</b> · {s.unit_weight_lb} lb each<br>'
+                f'<span style="font-family:ui-monospace,SF Mono,monospace;font-size:10px;'
+                f'color:#6B7280;">{s.layout}</span><br>'
+                f'<span style="font-weight:700;color:#111827;">'
+                f'~{s.estimated_min} min · cum {s.cumulative_lift_lb_per_person:,} lb '
+                f'{s.crew}P</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            # Progress bar — how full the truck is after this step
+            st.markdown(
+                f'<div style="margin-top:6px;">'
+                f'<div style="font-size:9px;color:#6B7280;display:flex;justify-content:space-between;">'
+                f'<span>After step {s.step_no}</span><span>{cum_units}/{total_units} units</span></div>'
+                f'<div style="background:#E5E7EB;height:4px;border-radius:2px;overflow:hidden;">'
+                f'<div style="background:{col};height:100%;width:{progress_pct}%;"></div></div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            # Safety note
+            if safety:
+                st.markdown(
+                    f'<div style="font-size:10px;color:#991B1B;margin-top:6px;'
+                    f'font-weight:600;line-height:1.3;">! {safety}</div>',
+                    unsafe_allow_html=True,
+                )
 
     # ── Footer expanders (Why / Walk-through / Downloads / Email) ────
     with st.expander("Why this arrangement", expanded=False):
@@ -2165,9 +2325,6 @@ def render_step2_v4(
                 st.markdown(explain_html(reasons), unsafe_allow_html=True)
         except Exception:
             pass
-
-    with st.expander("Walk-through mode — one item at a time", expanded=False):
-        render_walkthrough(sim, master, truck_spec, load_id, chosen_key)
 
     with st.expander("Other downloads · Email driver", expanded=False):
         # Excel + Interactive 3D HTML alongside the PDF v4

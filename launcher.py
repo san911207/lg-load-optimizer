@@ -39,6 +39,59 @@ def _resource_path(rel: str) -> Path:
     return base / rel
 
 
+def _self_diagnostic() -> None:
+    """Quick sanity scan — printed at startup so failures are visible.
+
+    Issues silently broke build #25 on a colleague's PC: ModuleNotFoundError
+    or CBC quarantine vanished the console before the user could read it.
+    """
+    _say("--- Self-diagnostic ---")
+    # 1. Bundled engine modules
+    expected = [
+        "engine.categorizer", "engine.best_packer", "engine.router",
+        "engine.milp_solver", "engine.sa_refiner", "engine.zone_aggregator",
+        "engine.pdf_gen_v4", "engine.demote_layer",
+    ]
+    missing = []
+    for mod in expected:
+        try:
+            __import__(mod)
+        except Exception as e:
+            missing.append(f"{mod}  →  {type(e).__name__}: {e}")
+    if missing:
+        _say("[!] Module import failures:")
+        for m in missing:
+            _say(f"    - {m}")
+    else:
+        _say("[OK] All engine modules import cleanly.")
+
+    # 2. CBC solver — bundled by pulp; check it's reachable
+    try:
+        import pulp
+        s = pulp.PULP_CBC_CMD(msg=0)
+        if s.available():
+            _say("[OK] CBC solver available.")
+        else:
+            _say("[!] CBC solver NOT available — Windows Defender may have "
+                 "quarantined the bundled cbc.exe. MILP path will fall back "
+                 "to heuristic; simulation should still run.")
+    except Exception as e:
+        _say(f"[!] PuLP/CBC check failed: {type(e).__name__}: {e}")
+
+    # 3. Sample data
+    try:
+        sample = _resource_path("data/sample_input.xlsx")
+        if sample.exists():
+            _say(f"[OK] Sample data found: {sample}")
+        else:
+            _say(f"[!] Sample data MISSING at {sample} — upload a master to use the app.")
+    except Exception as e:
+        _say(f"[!] Sample-data check failed: {e}")
+
+    _say("---")
+    _say("")
+
+
 def main() -> None:
     _say("=" * 64)
     _say("  LG Load Optimizer — starting up...")
@@ -47,6 +100,10 @@ def main() -> None:
     _say("Please wait 10-30 seconds for Streamlit to initialize.")
     _say("A browser tab will open automatically. If not, copy the URL below.")
     _say("")
+    try:
+        _self_diagnostic()
+    except Exception:
+        _say(f"(Self-diagnostic crashed — continuing anyway:\n{traceback.format_exc()})")
 
     try:
         port = _find_free_port()
