@@ -54,64 +54,12 @@ def in_to_ft(v: float) -> float: return v / 12.0
 def cuin_to_cft(v: float) -> float: return v / 1728.0
 
 
-def broad_category(cat: str) -> str:
-    """Map detailed category / Division name → broad bucket.
-
-    Recognises:
-      - English LG ERP terms ("Refrigerator", "Laundry-Washer", "Cooking-Oven", "HE", "AV")
-      - Korean ERP terms (냉장고/세탁기/건조기/식기세척기/전자레인지/오븐/렌지/TV/모니터/패널)
-      - Underscored sub-categories ("Refrigerator_FrenchDoor4Door", "TV_OLED_77")
-    Falls back to "other" only when no match.
-    """
-    c = (cat or "").lower().strip()
-    if not c:
-        return "other"
-
-    # Korean
-    if "냉장고" in cat:
-        return "refrigerator"
-    if "세탁기" in cat:
-        return "washer"
-    if "건조기" in cat:
-        return "dryer"
-    if "식기세척기" in cat or "식기" in cat:
-        return "dishwasher"
-    if "전자레인지" in cat or "전자렌지" in cat or "마이크로웨이브" in cat:
-        return "microwave"
-    if "오븐" in cat or "월오븐" in cat:
-        return "oven"
-    if "쿡탑" in cat or "렌지" in cat or "레인지" in cat or "스토브" in cat:
-        return "oven"
-    if "모니터" in cat:
-        return "monitor"
-    if "텔레비전" in cat or "티비" in cat:
-        return "tv"
-
-    # English — longer keys first
-    for key in (
-        "refrigerator", "fridge", "dishwasher",
-        "microwave", "monitor", "washer", "washing", "laundry-w",
-        "dryer", "laundry-d", "cooktop", "wall_oven", "wall-oven",
-    ):
-        if key in c:
-            if key in ("washing", "laundry-w"):
-                return "washer"
-            if key == "laundry-d":
-                return "dryer"
-            if key in ("fridge",):
-                return "refrigerator"
-            if key in ("cooktop", "wall_oven", "wall-oven"):
-                return "oven"
-            return key
-
-    if "oven" in c or "range" in c or "stove" in c or "cooking" in c:
-        return "oven"
-    if c.startswith("tv_") or c == "tv" or " tv" in c or "television" in c or c.startswith("home_entertainment") or c == "he":
-        return "tv"
-    if c.startswith("av") or "audio" in c or "speaker" in c:
-        return "av"
-
-    return "other"
+# broad_category lives in engine/categorizer.py — single source of truth.
+# Previously this file had a divergent copy that classified LG-ERP
+# Divison values ("Home Entertainment", "RFG", "Cooking-Range", H/A,
+# RAC, HE, …) differently from the PDF-side function, causing the
+# "Other × 16" leak in production (CEO report 2026-05-18).
+from engine.categorizer import broad_category  # noqa: F401, E402  (re-export)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -1814,6 +1762,452 @@ def _step_range_label(ps: List[Dict[str, Any]]) -> str:
 
 
 # =========================================================================
+# Step 2 v4 — dashboard mirroring the PDF v4 work-order layout
+# =========================================================================
+# Same data, same shape, same engine output as the PDF.  The dispatcher's
+# screen and the worker's printout match section-for-section.  Legacy
+# render_step2 is kept above for emergency rollback.
+
+
+def _kpi_cell_html(label: str, value: str, sub: str, kind: str = "neutral") -> str:
+    """Return one HTML <div> for the KPI strip."""
+    palette = {
+        "gold":    ("#FEF3C7", "#92400E"),
+        "success": ("#ECFDF5", "#065F46"),
+        "danger":  ("#FEE2E2", "#991B1B"),
+        "neutral": ("#FFFFFF", "#374151"),
+    }
+    bg, fg = palette.get(kind, palette["neutral"])
+    return (
+        f'<div style="background:{bg};border:1px solid #D1D5DB;'
+        f'border-radius:6px;padding:12px 14px;text-align:center;flex:1;">'
+        f'<div style="font-size:10px;font-weight:700;letter-spacing:0.5px;'
+        f'text-transform:uppercase;color:#6B7280;">{label}</div>'
+        f'<div style="font-size:24px;font-weight:800;color:{fg};margin:3px 0;'
+        f'letter-spacing:-0.5px;">{value}</div>'
+        f'<div style="font-size:11px;color:#6B7280;">{sub}</div>'
+        f'</div>'
+    )
+
+
+def render_step2_v4(
+    load_id: str,
+    sim_26: Dict[str, Any], sim_53: Dict[str, Any],
+    master: Dict[str, Dict[str, Any]],
+    trucks_map: Dict[str, Dict[str, Any]],
+    recommended_key: str,
+) -> None:
+    """Step 2 — section-for-section mirror of PDF v4 layout:
+
+        Header (Load + Carrier + Driver + Left-anchor)
+        KPI 5 (Items / Length / Weight / Volume / Heavy on floor)
+        Row A: 3D Isometric   |   Row B: Zone breakdown
+        Row C: Dock Lineup (Wave 1 / Wave 2)
+        Row D: 5-Stage cards (1P/2P chip + units + layout + time + cum + safety)
+        Footer expander: Why this arrangement, Walk-through, Downloads, Email
+    """
+    from engine.pdf_gen_v4 import generate_work_order_v4
+    from engine.zone_aggregator import (
+        Stage,
+        Zone,
+        aggregate_zones,
+        stages_from_zones,
+    )
+
+    # ── Truck radio (screen-only — PDF is single-truck) ────────────────
+    labels = {
+        "26ft": (
+            f"26ft Box Truck · Fits {sim_26['fitted_count']}/{sim_26['requested_count']}"
+            + ("" if sim_26["fits"] else f" · ⚠ {sim_26.get('unfitted_count',0)} unfitted")
+        ),
+        "53ft": (
+            f"53ft Dry Van · Fits {sim_53['fitted_count']}/{sim_53['requested_count']}"
+            + ("" if sim_53["fits"] else f" · ⚠ {sim_53.get('unfitted_count',0)} unfitted")
+        ),
+    }
+    options_keys = ["26ft", "53ft"]
+    default_idx = options_keys.index(recommended_key) if recommended_key in options_keys else 0
+    chosen_label = st.radio(
+        "Truck",
+        [labels[k] for k in options_keys],
+        index=default_idx,
+        horizontal=True,
+        key=f"truck_step2v4_{load_id}",
+    )
+    chosen_key = options_keys[[labels[k] for k in options_keys].index(chosen_label)]
+    sim = sim_26 if chosen_key == "26ft" else sim_53
+    truck_spec = trucks_map[chosen_key]
+    label = "26ft Box Truck" if chosen_key == "26ft" else "53ft Dry Van"
+    m = sim["metrics"]
+    placements = sim.get("placements", [])
+    pair_count = sim.get("pair_count", 0)
+
+    # Build the zone / stage data exactly the same way the PDF does.
+    zones = aggregate_zones(placements, master, pair_count=pair_count)
+    stages = stages_from_zones(zones)[:5]
+
+    # ── HEADER ─────────────────────────────────────────────────────────
+    bol = load_id
+    carrier = "—"
+    dock = "—"
+    appt = "—"
+    route = "—"
+    driver = ""
+    head_cols = st.columns([3, 2])
+    with head_cols[0]:
+        st.markdown(
+            f'<div style="border-bottom:1.5px solid #111827;padding-bottom:8px;">'
+            f'<div style="display:flex;align-items:center;gap:12px;">'
+            f'<div style="background:#A50034;color:white;width:26px;height:26px;'
+            f'border-radius:5px;display:flex;align-items:center;justify-content:center;'
+            f'font-weight:800;font-size:15px;">L</div>'
+            f'<div>'
+            f'<div style="font-size:11px;color:#6B7280;font-weight:600;">LG Load Optimizer</div>'
+            f'<div style="font-size:18px;font-weight:800;color:#111827;">'
+            f'Work Order  ·  Load {load_id}</div>'
+            f'</div></div>'
+            f'<div style="font-size:10px;color:#6B7280;margin-top:6px;">'
+            f'<b>BOL</b> {bol} · <b>Carrier</b> {carrier} · <b>Dock</b> {dock} · '
+            f'<b>Appt</b> {appt} · <b>Route</b> {route} · <b>Truck</b> {label}'
+            f'</div>'
+            f'<div style="display:flex;justify-content:space-between;margin-top:6px;'
+            f'font-size:10px;">'
+            f'<span style="color:#374151;"><b>Driver:</b> {driver or "—"}</span>'
+            f'<span style="color:#991B1B;font-weight:700;">'
+            f'> Left = driver-side, facing rear doors</span>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    with head_cols[1]:
+        # Generate the v4 PDF once for the hero button
+        try:
+            pdf_bytes = generate_work_order_v4(
+                sim, load_id=load_id, truck_label=label,
+                truck_spec=truck_spec, master=master,
+            )
+        except Exception as e:
+            pdf_bytes = None
+            st.error(f"PDF generation failed: {e}")
+        if pdf_bytes:
+            st.download_button(
+                "🖨 Print PDF work order",
+                pdf_bytes,
+                file_name=f"{load_id}_{chosen_key}_workorder.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                key=f"pdf_v4_{load_id}_{chosen_key}",
+                type="primary",
+            )
+
+    # Audit / category-leak chips (screen-only — useful for dispatcher)
+    is_optimal = sim.get("is_provable_optimal", False)
+    engine_internal = sim.get("engine", "Heuristic")
+    if is_optimal:
+        eng_chip = '<span style="background:#FEF3C7;color:#92400E;padding:3px 9px;border-radius:5px;font-size:11px;font-weight:700;">★ Auto · Proven shortest</span>'
+    elif "SA" in engine_internal:
+        eng_chip = '<span style="background:#ECFDF5;color:#047857;padding:3px 9px;border-radius:5px;font-size:11px;font-weight:700;">Auto · Space-optimized</span>'
+    else:
+        eng_chip = '<span style="background:#F3F4F6;color:#4B5563;padding:3px 9px;border-radius:5px;font-size:11px;font-weight:700;">Auto · Fast arrangement</span>'
+    blk = sim.get("audit_block_count", 0)
+    wrn = sim.get("audit_warn_count", 0)
+    extra_chips = eng_chip
+    if blk:
+        extra_chips += f' <span style="background:#FEE2E2;color:#991B1B;padding:3px 9px;border-radius:5px;font-size:11px;font-weight:700;">⚠ {blk} loading rule violation(s)</span>'
+    if wrn:
+        extra_chips += f' <span style="background:#FFFBEB;color:#B45309;padding:3px 9px;border-radius:5px;font-size:11px;font-weight:700;">△ {wrn} warning(s)</span>'
+    st.markdown(
+        f'<div style="margin:8px 0 6px 0;">{extra_chips}</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Audit findings expander (auto-open on block OR warn)
+    findings = sim.get("audit_findings", [])
+    if findings:
+        with st.expander(
+            f"⚠ Audit findings ({len(findings)})",
+            expanded=(blk + wrn) > 0,
+        ):
+            for f in findings:
+                sev = f.get("severity", "info")
+                color = {"block": "#B91C1C", "warn": "#B45309",
+                         "info": "#1D4ED8"}.get(sev, "#6B7280")
+                st.markdown(
+                    f'<div style="border-left:3px solid {color};padding:6px 10px;'
+                    f'margin:4px 0;background:#FAFAFA;border-radius:0 4px 4px 0;'
+                    f'font-size:12px;">'
+                    f'<b style="color:{color};text-transform:uppercase;font-size:10px;">{sev}</b> · '
+                    f'<b>{f.get("rule","")}</b><br>'
+                    f'<span style="color:#4B5563;">{f.get("message","")}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+    if not placements:
+        st.warning("No placements to render. Return to Step 1.")
+        return
+
+    # ── KPI 5 ─────────────────────────────────────────────────────────
+    fits_ct = sim.get("fitted_count", 0)
+    requested = sim.get("requested_count", 0)
+    unfitted = sim.get("unfitted_count", max(0, requested - fits_ct))
+    heavy_ct = sum(1 for p in placements if p.get("weight_lb", 0) >= 150)
+    kpi_html = (
+        '<div style="display:flex;gap:6px;margin:6px 0 14px;">'
+        + _kpi_cell_html("Items", f"{fits_ct} / {requested}",
+                         "All fit" if unfitted == 0 else f"! {unfitted} left over",
+                         "success" if unfitted == 0 else "danger")
+        + _kpi_cell_html("Length", f"{m.get('x_used_ft', 0):g} ft",
+                         "Proven shortest" if is_optimal else "Space-optimized",
+                         "gold")
+        + _kpi_cell_html("Weight", f"{int(m.get('weight_total_lb', 0)):,} lb",
+                         f"{m.get('weight_util_pct', 0):g}% util", "neutral")
+        + _kpi_cell_html("Volume", f"{m.get('volume_loaded_cft', 0):g} ft³",
+                         f"{m.get('volume_util_pct', 0):g}% util", "neutral")
+        + _kpi_cell_html("Heavy on floor", f"{heavy_ct}",
+                         "z=0 verified", "neutral")
+        + '</div>'
+    )
+    st.markdown(kpi_html, unsafe_allow_html=True)
+
+    # ── Row A · 3D Iso  |  Row B · Zone breakdown ──────────────────────
+    row1 = st.columns([1, 1])
+    with row1[0]:
+        st.markdown(
+            '<div style="font-size:11px;font-weight:700;color:#6B7280;'
+            'text-transform:uppercase;letter-spacing:0.5px;">'
+            'A · Isometric — rows × lanes × tiers</div>',
+            unsafe_allow_html=True,
+        )
+        fig_3d = build_3d_figure(sim, truck_spec, master)
+        st.plotly_chart(
+            fig_3d, use_container_width=True,
+            key=f"step2v4_3d_{load_id}_{chosen_key}",
+            config={"displayModeBar": False},
+        )
+    with row1[1]:
+        st.markdown(
+            '<div style="font-size:11px;font-weight:700;color:#6B7280;'
+            'text-transform:uppercase;letter-spacing:0.5px;">'
+            'B · Zone breakdown</div>',
+            unsafe_allow_html=True,
+        )
+        # Build zone DataFrame from the same aggregator the PDF uses
+        zone_rows = []
+        for z in zones:
+            if z.is_pair:
+                half = z.item_count // 2
+                qty = f"{half} + {z.item_count - half}"
+            else:
+                qty = str(z.item_count)
+            title = z.raw_category if z.broad_category == "other" and z.raw_category else (
+                {"refrigerator": "Refrigerator", "washer": "Washer",
+                 "washer_dryer_pair": "Washer + Dryer (paired)",
+                 "dryer": "Dryer", "dishwasher": "Dishwasher",
+                 "microwave": "Microwave", "oven": "Wall Oven",
+                 "tv": "TV", "monitor": "Monitor", "av": "Audio",
+                 "ac": "Air Conditioner", "other": "Other"}.get(
+                     z.broad_category, z.broad_category.capitalize())
+            )
+            zone_rows.append({
+                "Zone": f"{z.zone_id} · {title}",
+                "Qty": qty,
+                "Layout": f"{z.rows}R × {z.lanes}L × {z.tiers}T",
+                "Length": f"{z.length_ft_start} to {z.length_ft_end} ft",
+                "Weight": f"{z.weight_lb:,} lb",
+            })
+        st.dataframe(
+            pd.DataFrame(zone_rows),
+            hide_index=True, use_container_width=True,
+        )
+
+    # ── Row C · Dock Lineup ───────────────────────────────────────────
+    mid = max(1, len(stages) // 2)
+    wave1 = stages[:mid]
+    wave2 = stages[mid:]
+    stage_title_map = {
+        "refrigerator": "Refrigerator", "washer": "Washer",
+        "dryer": "Dryer", "dishwasher": "Dishwasher",
+        "microwave": "Microwave", "oven": "Wall Oven",
+        "washer_dryer_pair": "Washer + Dryer",
+        "tv": "TV", "monitor": "Monitor", "av": "Audio",
+    }
+    def _stage_title(s: Stage) -> str:
+        if not s.zones:
+            return s.title_en or "Stage"
+        z0 = s.zones[0]
+        if z0.broad_category == "other" and z0.raw_category:
+            return z0.raw_category[:18]
+        broad = z0.broad_category
+        # Washer+Dryer split — washer (floor) then dryer (top)
+        if broad == "washer_dryer_pair":
+            if "tier 2" in s.layout or "위" in s.title_kr:
+                return "Dryer (top stack)"
+            return "Washer (floor)"
+        if broad == "washer" and "바닥" in s.title_kr:
+            return "Washer (floor)"
+        if broad == "dryer":
+            return "Dryer (top stack)"
+        if broad == "oven":
+            return "Wall Oven + close-out"
+        return stage_title_map.get(broad, broad.capitalize())
+
+    def _wave_html(name: str, stages_in: List[Stage], hint: str) -> str:
+        items_html = ""
+        for s in stages_in:
+            items_html += (
+                f'<div style="font-size:13px;color:#374151;padding:2px 0;">'
+                f'{s.step_no}. {_stage_title(s)} × {s.units}</div>'
+            )
+        return (
+            f'<div style="padding:10px 14px;">'
+            f'<div style="font-size:14px;font-weight:700;color:#111827;">{name}</div>'
+            f'<div style="font-size:10px;color:#6B7280;margin-bottom:4px;">{hint}</div>'
+            f'{items_html}'
+            f'</div>'
+        )
+    st.markdown(
+        '<div style="font-size:11px;font-weight:700;color:#6B7280;'
+        'text-transform:uppercase;letter-spacing:0.5px;margin-top:8px;">'
+        'C · Dock Lineup — Wave split</div>',
+        unsafe_allow_html=True,
+    )
+    wave_cols = st.columns(2)
+    with wave_cols[0]:
+        st.markdown(
+            '<div style="background:white;border:1px solid #D1D5DB;border-radius:5px;">'
+            + _wave_html("Wave 1", wave1, "lanes A · B · C simultaneous")
+            + '</div>',
+            unsafe_allow_html=True,
+        )
+    with wave_cols[1]:
+        st.markdown(
+            '<div style="background:white;border:1px solid #D1D5DB;border-radius:5px;">'
+            + _wave_html("Wave 2", wave2, "start when Wave 1 half-cleared")
+            + '</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Row D · 5-Stage cards ────────────────────────────────────────
+    st.markdown(
+        '<div style="font-size:11px;font-weight:700;color:#6B7280;'
+        'text-transform:uppercase;letter-spacing:0.5px;margin-top:14px;">'
+        'D · 5-Stage loading — side view (progressively filled)</div>',
+        unsafe_allow_html=True,
+    )
+    cat_colors_html = {
+        "refrigerator": "#85B7EB", "washer": "#ED93B1", "dryer": "#F4C0D1",
+        "washer_dryer_pair": "#E89BB0", "dishwasher": "#AFA9EC",
+        "microwave": "#FBBF24", "oven": "#F4A07A", "tv": "#60A5FA",
+        "monitor": "#22D3EE", "av": "#34D399", "ac": "#5EEAD4",
+        "other": "#D1D5DB",
+    }
+    safety_map = {
+        "refrigerator": "Strap to cab wall first. Hand-truck required.",
+        "washer": "Verify 4 transit bolts engaged.",
+        "dryer": "Align precisely on washer. 2-person lift.",
+        "dishwasher": "Hose side up. Prevent residual water leak.",
+        "microwave": "Protect glass-door corners. Light item.",
+        "oven": "Verify door lock. No items on glass-top.",
+        "tv": "Carton 'UP' arrows must face up. No horizontal stacking.",
+        "monitor": "Top-of-package impact-sensitive.",
+        "washer_dryer_pair": "Pair-mate items — load adjacent.",
+    }
+    n = min(5, len(stages))
+    stage_cols = st.columns(max(n, 1))
+    for i in range(n):
+        s = stages[i]
+        broad = s.zones[0].broad_category if s.zones else "other"
+        col = cat_colors_html.get(broad, "#D1D5DB")
+        crew_chip = (
+            f'<span style="background:#FEF3C7;color:#92400E;padding:2px 8px;'
+            f'border-radius:3px;font-size:10px;font-weight:700;">{s.crew}P</span>'
+            if s.crew == 2 else
+            f'<span style="background:#ECFDF5;color:#065F46;padding:2px 8px;'
+            f'border-radius:3px;font-size:10px;font-weight:700;">{s.crew}P</span>'
+        )
+        title = _stage_title(s)
+        safety = safety_map.get(broad, "")
+        card_html = (
+            f'<div style="background:white;border:1px solid #D1D5DB;border-radius:5px;'
+            f'padding:9px 11px;display:flex;flex-direction:column;height:100%;">'
+            f'<div style="display:flex;align-items:center;gap:6px;">'
+            f'<div style="background:{col};color:white;width:22px;height:22px;'
+            f'border-radius:50%;display:flex;align-items:center;justify-content:center;'
+            f'font-weight:800;font-size:11px;">{s.step_no}</div>'
+            f'<div style="flex:1;font-size:12px;font-weight:700;color:#111827;'
+            f'line-height:1.2;">{title}</div>'
+            f'{crew_chip}'
+            f'</div>'
+            f'<div style="font-size:11px;color:#374151;margin-top:8px;">'
+            f'{s.units} units · {s.unit_weight_lb} lb each<br>'
+            f'<span style="font-family:ui-monospace,SF Mono,monospace;font-size:10px;'
+            f'color:#6B7280;">{s.layout}</span></div>'
+            f'<div style="font-size:11px;font-weight:700;color:#111827;margin-top:4px;">'
+            f'~{s.estimated_min} min · cum {s.cumulative_lift_lb_per_person:,} lb '
+            f'{s.crew}P</div>'
+        )
+        if safety:
+            card_html += (
+                f'<div style="font-size:10px;color:#991B1B;margin-top:4px;'
+                f'font-weight:600;">! {safety}</div>'
+            )
+        card_html += '</div>'
+        with stage_cols[i]:
+            st.markdown(card_html, unsafe_allow_html=True)
+
+    # ── Footer expanders (Why / Walk-through / Downloads / Email) ────
+    with st.expander("Why this arrangement", expanded=False):
+        try:
+            from engine.explain import explain, explain_html
+            reasons = explain(sim, master, truck_spec)
+            if reasons:
+                st.markdown(explain_html(reasons), unsafe_allow_html=True)
+        except Exception:
+            pass
+
+    with st.expander("Walk-through mode — one item at a time", expanded=False):
+        render_walkthrough(sim, master, truck_spec, load_id, chosen_key)
+
+    with st.expander("Other downloads · Email driver", expanded=False):
+        # Excel + Interactive 3D HTML alongside the PDF v4
+        excel_bytes = build_simple_excel(sim, load_id, chosen_key, master, trucks_map)
+        html_bytes = fig_3d.to_html(include_plotlyjs="cdn", full_html=True).encode("utf-8")
+        dc1, dc2 = st.columns(2)
+        with dc1:
+            st.download_button(
+                "📊 Excel report",
+                excel_bytes,
+                file_name=f"{load_id}_{chosen_key}_load_report.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key=f"excel_v4_{load_id}_{chosen_key}",
+            )
+        with dc2:
+            st.download_button(
+                "⬇ Interactive 3D HTML",
+                html_bytes,
+                file_name=f"{load_id}_{chosen_key}_3d.html",
+                mime="text/html",
+                use_container_width=True,
+                key=f"html_v4_{load_id}_{chosen_key}",
+            )
+        try:
+            from engine.email_ui import render_email_panel
+            # Persist generated artefacts so render_email_panel can attach them
+            if pdf_bytes:
+                pdf_path = OUT_DIR / f"{load_id}_{chosen_key}_workorder.pdf"
+                pdf_path.write_bytes(pdf_bytes)
+            excel_path = OUT_DIR / f"{load_id}_{chosen_key}_load_report.xlsx"
+            excel_path.write_bytes(excel_bytes)
+            html_path = OUT_DIR / f"{load_id}_{chosen_key}_3d.html"
+            fig_3d.write_html(str(html_path), include_plotlyjs="cdn", full_html=True)
+            render_email_panel(load_id, chosen_key, sim, OUT_DIR)
+        except Exception:
+            pass
+
+
+# =========================================================================
 # Sidebar Load picker (only shown on Load Plan page)
 # =========================================================================
 LOADS_REQUIRED_COLS = ["load_id", "model_code", "quantity"]
@@ -2102,7 +2496,7 @@ if page == "📦 Load Plan":
     with tab1:
         render_step1(load_id, load_lines, master, trucks_map, sim_26, sim_53, destination)
     with tab2:
-        render_step2(load_id, sim_26, sim_53, master, trucks_map, recommended_key)
+        render_step2_v4(load_id, sim_26, sim_53, master, trucks_map, recommended_key)
 
 
 # =========================================================================

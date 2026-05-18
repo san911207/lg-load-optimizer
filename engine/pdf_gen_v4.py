@@ -141,7 +141,7 @@ SAFETY_NOTE_EN: Dict[str, str] = {
     "dishwasher":   "Hose side up. Prevent residual water leak.",
     "microwave":    "Protect glass-door corners. Light item.",
     "oven":         "Verify door lock. No items on glass-top.",
-    "tv":           "Carton ↑ arrows must face up. No horizontal stacking.",
+    "tv":           "Carton 'UP' arrows must face up. No horizontal stacking.",
     "monitor":      "Top-of-package impact-sensitive.",
 }
 
@@ -239,7 +239,7 @@ def generate_work_order_v4(
         c.drawString(margin + 32, y_top - 50, f"Driver: {driver}")
     c.setFillColor(danger); c.setFont("Helvetica-Bold", 8)
     c.drawString(page_w - margin - 230, y_top - 50,
-                 "↳ Left = driver-side, facing rear doors")
+                 "> Left = driver-side, facing rear doors")
 
     # ── KPI STRIP (5 cells) ────────────────────────────────────────────
     kpi_y = y_top - header_h - gap - kpi_h
@@ -253,7 +253,7 @@ def generate_work_order_v4(
     cells = [
         ("Items",
          f"{fits_ct} / {requested}",
-         "All fit ✓" if unfitted == 0 else f"⚠ {unfitted} left over",
+         "All fit" if unfitted == 0 else f"! {unfitted} left over",
          "success" if unfitted == 0 else "danger"),
         ("Length",
          f"{metrics.get('x_used_ft', 0):g} ft",
@@ -298,9 +298,9 @@ def generate_work_order_v4(
     body_bottom = margin + foot_h + gap
     body_h = body_top - body_bottom
 
-    # Row split (no pre-load / no close-out):
-    row_3d_h = body_h * 0.34
-    row_lineup_h = body_h * 0.14
+    # Row split — zone-level 3D needs more height to render readable labels
+    row_3d_h = body_h * 0.42
+    row_lineup_h = body_h * 0.12
     row_stage_h = body_h - row_3d_h - row_lineup_h - 2 * gap
 
     # ── Row 1: 3D + Zone breakdown ─────────────────────────────────────
@@ -383,84 +383,250 @@ def _draw_panel_header(c, x, y, num, title, text_tertiary):
 # ── 3D Iso with zone glyphs ────────────────────────────────────────────
 
 
+def _zone_bbox(zone: "Zone", placements: List[Dict[str, Any]]):
+    """Compute the (min_x, min_y, min_z, max_x, max_y, max_z) AABB of a zone."""
+    items = [p for p in placements if p.get("seq") in set(zone.item_seqs)]
+    if not items:
+        return None
+    min_x = min(p["x_in"] for p in items)
+    min_y = min(p["y_in"] for p in items)
+    min_z = min(p["z_in"] for p in items)
+    max_x = max(p["x_in"] + p["dim_x_in"] for p in items)
+    max_y = max(p["y_in"] + p["dim_y_in"] for p in items)
+    max_z = max(p["z_in"] + p["dim_z_in"] for p in items)
+    return (min_x, min_y, min_z, max_x, max_y, max_z)
+
+
 def _draw_iso_with_zones(c, x, y, w, h, truck_spec, placements, zones,
                         master, text_primary, text_tertiary, border, danger):
-    from reportlab.lib.colors import HexColor, white
+    """True 30° isometric — viewer at upper-right, 45° elevation.
 
+    **Zone-level rendering** (not per-item). Each zone draws as a single
+    big iso block coloured by category with TOP/FRONT/RIGHT face shading.
+    This is what makes the diagram legible at PDF scale — 44 individual
+    SKUs become unreadable pixels; 4-5 zone blocks are big enough to
+    label clearly.
+
+    Projection:
+        px = (ix - iy) * cos(30°)
+        py = (ix + iy) * sin(30°) + iz
+    Cab at lower-LEFT, dock at upper-RIGHT. Width recedes upper-left.
+    Vertical straight up. Door-track zone drawn AFTER crates so it
+    overlays. Zone label is centered on the FRONT face of each block.
+    """
+    from reportlab.lib.colors import HexColor, white, Color
+    import math
+
+    # Panel background
     c.setFillColor(HexColor("#FAFBFC")); c.setStrokeColor(border)
     c.setLineWidth(0.5); c.roundRect(x, y, w, h, 3, stroke=1, fill=1)
 
-    L = truck_spec["length_in"]; W = truck_spec["width_in"]; H = truck_spec["height_in"]
-    pad = 10
-    iso_ax = 0.45; iso_ay = 0.32
-    sx = (w - 2 * pad) / (L + W * iso_ax)
-    sz = (h - 2 * pad) / (H + W * iso_ay)
-    s = min(sx, sz)
-    if s <= 0:
+    L = float(truck_spec["length_in"])
+    W = float(truck_spec["width_in"])
+    H = float(truck_spec["height_in"])
+
+    # 30° isometric — true equal-angle projection
+    COS30 = math.cos(math.radians(30))    # 0.8660
+    SIN30 = math.sin(math.radians(30))    # 0.5000
+
+    def _world_to_iso(ix, iy, iz):
+        """3D world → 2D unit-scale isometric coords (no scale/offset yet)."""
+        return ((ix - iy) * COS30, (ix + iy) * SIN30 + iz)
+
+    # Compute the iso bounding box of the truck so we know how to fit it
+    # into the panel.
+    pts = [
+        _world_to_iso(ix, iy, iz)
+        for ix in (0, L) for iy in (0, W) for iz in (0, H)
+    ]
+    min_px = min(p[0] for p in pts)
+    max_px = max(p[0] for p in pts)
+    min_py = min(p[1] for p in pts)
+    max_py = max(p[1] for p in pts)
+    bbox_w = max_px - min_px
+    bbox_h = max_py - min_py
+
+    pad = 12
+    label_top = 14   # reserved space above truck for zone labels
+    panel_w = max(1.0, w - 2 * pad)
+    panel_h = max(1.0, h - 2 * pad - label_top)
+    scale = min(panel_w / max(bbox_w, 1.0), panel_h / max(bbox_h, 1.0))
+    if scale <= 0:
         return
-    ty = W * iso_ay * s
-    ox = x + pad; oy = y + pad + ty
+
+    # Origin: place projected (0,0,0) so that the projected bounding box
+    # is centered horizontally in the panel and pinned to the bottom.
+    rendered_w = bbox_w * scale
+    rendered_h = bbox_h * scale
+    ox = x + pad + (panel_w - rendered_w) / 2 - min_px * scale
+    oy = y + pad + (panel_h - rendered_h) / 2 - min_py * scale
 
     def proj(ix, iy, iz):
-        return ox + ix * s + iy * iso_ax * s, oy + iz * s - iy * iso_ay * s
+        px, py = _world_to_iso(ix, iy, iz)
+        return ox + px * scale, oy + py * scale
 
-    corners = [proj(0,0,0), proj(L,0,0), proj(L,W,0), proj(0,W,0),
-               proj(0,0,H), proj(L,0,H), proj(L,W,H), proj(0,W,H)]
-    c.setStrokeColor(HexColor("#1F2937")); c.setLineWidth(0.8)
+    # ── Truck wireframe (12 edges, 8 corners) ─────────────────────────
+    corners = [
+        proj(0,0,0), proj(L,0,0), proj(L,W,0), proj(0,W,0),
+        proj(0,0,H), proj(L,0,H), proj(L,W,H), proj(0,W,H),
+    ]
+    c.setStrokeColor(HexColor("#1F2937"))
+    c.setLineWidth(0.9)
     for a, b in [(0,1),(1,2),(2,3),(3,0),(4,5),(5,6),(6,7),(7,4),(0,4),(1,5),(2,6),(3,7)]:
         c.line(*corners[a], *corners[b])
 
-    rear_threshold = L - DOOR_TRACK_LEN_IN
-    dz_floor = H - DOOR_TRACK_LOSS_IN
-    p1 = proj(rear_threshold, 0, dz_floor); p2 = proj(L, 0, dz_floor)
-    p3 = proj(L, 0, H);                     p4 = proj(rear_threshold, 0, H)
-    c.setFillColor(HexColor("#FCA5A5"))
-    if hasattr(c, "setFillAlpha"): c.setFillAlpha(0.35)
-    path = c.beginPath(); path.moveTo(*p1); path.lineTo(*p2); path.lineTo(*p3); path.lineTo(*p4); path.close()
-    c.drawPath(path, stroke=0, fill=1)
-    if hasattr(c, "setFillAlpha"): c.setFillAlpha(1)
+    # ── Hybrid rendering: individual items, but coloured by ZONE ──────
+    # CEO feedback 2026-05-18: zone-only blocks lose product-level
+    # detail; per-item rendering with consistent zone colours lets the
+    # worker count items AND see the zone grouping at the same time.
 
+    def _shade(base: "Color", factor: float) -> "Color":
+        """Multiply RGB by factor (0..2) for face shading; clamp to 1.0."""
+        return Color(
+            min(1.0, base.red * factor),
+            min(1.0, base.green * factor),
+            min(1.0, base.blue * factor),
+        )
+
+    # Build a sequence → zone lookup so each item picks up its zone colour
     zone_lookup: Dict[int, Zone] = {}
-    for z in zones:
-        for sq in z.item_seqs:
-            zone_lookup[sq] = z
+    for zn in zones:
+        for sq in zn.item_seqs:
+            zone_lookup[sq] = zn
 
-    items = sorted(placements, key=lambda p: (p["y_in"], -p["x_in"], p["z_in"]))
-    for p in items:
-        z = zone_lookup.get(p.get("seq", -1))
-        color = _cat_color(z.broad_category) if z else _cat_color("other")
+    # Painter's order: back-to-front (small x+y first, then small z)
+    items_sorted = sorted(
+        placements,
+        key=lambda p: (p["x_in"] + p["y_in"], p["z_in"]),
+    )
+    for p in items_sorted:
+        zn = zone_lookup.get(p.get("seq", -1))
+        base = _cat_color(zn.broad_category) if zn else _cat_color("other")
         x0, y0, z0 = p["x_in"], p["y_in"], p["z_in"]
         dx, dy, dz = p["dim_x_in"], p["dim_y_in"], p["dim_z_in"]
-        a = proj(x0, y0, z0); b = proj(x0+dx, y0, z0)
-        d = proj(x0+dx, y0, z0+dz); e = proj(x0, y0, z0+dz)
-        c.setFillColor(color); c.setStrokeColor(HexColor("#1F2937")); c.setLineWidth(0.3)
-        path = c.beginPath(); path.moveTo(*a); path.lineTo(*b); path.lineTo(*d); path.lineTo(*e); path.close()
-        c.drawPath(path, stroke=1, fill=1)
 
-    # English glyph labels above each zone — use raw category for "other"
-    # so the dispatcher sees the unmatched Division name instead of "??".
-    for z in zones:
-        if not z.item_seqs:
-            continue
-        zps = [p for p in placements if p.get("seq") in set(z.item_seqs)]
-        if not zps:
-            continue
-        cx = sum(p["x_in"] + p["dim_x_in"]/2 for p in zps) / len(zps)
-        cy = sum(p["y_in"] + p["dim_y_in"]/2 for p in zps) / len(zps)
-        cz_top = max(p["z_in"] + p["dim_z_in"] for p in zps)
-        gx, gy = proj(cx, cy, cz_top + 3)
-        if z.broad_category == "other" and z.raw_category:
-            glyph = z.raw_category[:4].upper()
+        # 8 vertices
+        v = {
+            "flb": proj(x0,    y0,    z0),
+            "frb": proj(x0+dx, y0,    z0),
+            "frt": proj(x0+dx, y0,    z0+dz),
+            "flt": proj(x0,    y0,    z0+dz),
+            "blb": proj(x0,    y0+dy, z0),
+            "brb": proj(x0+dx, y0+dy, z0),
+            "brt": proj(x0+dx, y0+dy, z0+dz),
+            "blt": proj(x0,    y0+dy, z0+dz),
+        }
+        c.setStrokeColor(HexColor("#1F2937"))
+        c.setLineWidth(0.45)        # crisp borders so items are countable
+
+        # FRONT face (y=y0)
+        c.setFillColor(base)
+        pth = c.beginPath()
+        pth.moveTo(*v["flb"]); pth.lineTo(*v["frb"])
+        pth.lineTo(*v["frt"]); pth.lineTo(*v["flt"]); pth.close()
+        c.drawPath(pth, stroke=1, fill=1)
+        # RIGHT face — shadow
+        c.setFillColor(_shade(base, 0.72))
+        pth = c.beginPath()
+        pth.moveTo(*v["frb"]); pth.lineTo(*v["brb"])
+        pth.lineTo(*v["brt"]); pth.lineTo(*v["frt"]); pth.close()
+        c.drawPath(pth, stroke=1, fill=1)
+        # TOP face — lit
+        c.setFillColor(_shade(base, 1.18))
+        pth = c.beginPath()
+        pth.moveTo(*v["flt"]); pth.lineTo(*v["frt"])
+        pth.lineTo(*v["brt"]); pth.lineTo(*v["blt"]); pth.close()
+        c.drawPath(pth, stroke=1, fill=1)
+
+    # ── Zone labels: float ABOVE the truck, one per zone ──────────────
+    # Each zone gets a single labelled badge so the dispatcher can see
+    # the category groupings without crowding individual crates.
+    zone_bboxes: List[Tuple[Zone, Tuple[float, ...]]] = []
+    for zn in zones:
+        bb = _zone_bbox(zn, placements)
+        if bb:
+            zone_bboxes.append((zn, bb))
+    zone_bboxes.sort(key=lambda zb: zb[1][0])   # left → right
+
+    label_y_world = H + 4
+    for zn, (x0, y0, z0, x1, y1, z1) in zone_bboxes:
+        cx = (x0 + x1) / 2
+        gx, gy = proj(cx, 0, label_y_world)
+        if zn.broad_category == "other" and zn.raw_category:
+            txt = f"{zn.raw_category[:8]}  x{zn.item_count}"
         else:
-            glyph = ZONE_GLYPH_EN.get(z.broad_category, z.broad_category[:3].upper())
+            short = ZONE_TITLE_EN.get(zn.broad_category, zn.broad_category.capitalize())
+            txt = f"{short}  x{zn.item_count}"
+        # White rounded badge
+        text_w = c.stringWidth(txt, "Helvetica-Bold", 8) + 10
+        # Color-coded left edge so the badge ties back to the zone fill
+        badge_left_col = _cat_color(zn.broad_category)
+        c.setFillColor(badge_left_col)
+        c.roundRect(gx - text_w/2, gy - 6, 6, 13, 2, stroke=0, fill=1)
+        c.setFillColor(HexColor("#FFFFFF"))
+        c.setStrokeColor(HexColor("#111827"))
+        c.setLineWidth(0.5)
+        c.roundRect(gx - text_w/2 + 5, gy - 6, text_w - 5, 13, 2, stroke=1, fill=1)
         c.setFillColor(HexColor("#111827"))
-        c.setFont("Helvetica-Bold", 9)
-        c.drawCentredString(gx, gy, glyph)
+        c.setFont("Helvetica-Bold", 8)
+        c.drawCentredString(gx + 2, gy - 2, txt)
 
+    # ── Door-track zone — drawn AFTER crates so it overlays ───────────
+    rear_threshold = L - DOOR_TRACK_LEN_IN
+    dz_floor = H - DOOR_TRACK_LOSS_IN
+    # The 2 visible faces of the door-track volume:
+    #   front (y=0) face — visible
+    #   top  (z=H) face — visible
+    # We draw both with semi-transparent red so dispatcher sees the cap.
+    if hasattr(c, "setFillAlpha"): c.setFillAlpha(0.30)
+    c.setFillColor(HexColor("#DC2626"))
+    c.setStrokeColor(HexColor("#B91C1C")); c.setLineWidth(0.6)
+
+    # Front face of door-track volume (y=0 plane)
+    dt_front = [
+        proj(rear_threshold, 0, dz_floor),
+        proj(L,               0, dz_floor),
+        proj(L,               0, H),
+        proj(rear_threshold,  0, H),
+    ]
+    pth = c.beginPath()
+    pth.moveTo(*dt_front[0])
+    for pt in dt_front[1:]: pth.lineTo(*pt)
+    pth.close()
+    c.drawPath(pth, stroke=1, fill=1)
+
+    # Top face of door-track volume (z=H plane)
+    dt_top = [
+        proj(rear_threshold, 0, H),
+        proj(L,               0, H),
+        proj(L,               W, H),
+        proj(rear_threshold,  W, H),
+    ]
+    pth = c.beginPath()
+    pth.moveTo(*dt_top[0])
+    for pt in dt_top[1:]: pth.lineTo(*pt)
+    pth.close()
+    c.drawPath(pth, stroke=1, fill=1)
+
+    if hasattr(c, "setFillAlpha"): c.setFillAlpha(1)
+
+    # Door-track inline label
+    c.setFillColor(HexColor("#7F1D1D"))
+    c.setFont("Helvetica-Bold", 6)
+    dt_label_pt = proj(rear_threshold + DOOR_TRACK_LEN_IN / 2, 0, H - 3)
+    c.drawCentredString(dt_label_pt[0], dt_label_pt[1], "DOOR-TRACK 87 in")
+
+    # Labels live ON each zone's front face (rendered inline above) —
+    # no extra glyph row needed above the truck.
+
+    # ── Compass anchors: Cab + Dock + Driver-side ────────────────────
+    cab_pt = proj(0, W / 2, 0)
     c.setFillColor(text_tertiary); c.setFont("Helvetica-Bold", 7)
-    c.drawString(corners[0][0] + 2, corners[0][1] - 7, "← Cab (front)")
+    c.drawString(cab_pt[0] - 24, cab_pt[1] - 12, "CAB (front)")
+
+    dock_pt = proj(L, W / 2, 0)
     c.setFillColor(danger)
-    c.drawRightString(corners[2][0], corners[2][1] - 7, "Dock (rear) →")
+    c.drawString(dock_pt[0] + 4, dock_pt[1] - 12, "DOCK (rear)")
 
 
 # ── Zone breakdown table (English) ─────────────────────────────────────
@@ -532,7 +698,7 @@ def _draw_zone_table(c, x, y, w, h, zones, text_primary, text_secondary,
         # Length
         c.setFont("Helvetica", 10); c.setFillColor(text_primary)
         c.drawString(cx + 2, row_y + 5,
-                     f"{z.length_ft_start} → {z.length_ft_end} ft")
+                     f"{z.length_ft_start} to {z.length_ft_end} ft")
         cx += headers[3][1]
 
         # Weight (right-aligned)
@@ -620,52 +786,124 @@ def _draw_stage_cards(c, x, y, w, h, stages, truck_spec, placements,
         c.drawString(cx + 6, info_y - 11, s.layout)
         c.setFont("Helvetica-Bold", 9); c.setFillColor(text_primary)
         c.drawString(cx + 6, info_y - 23,
-                     f"⏱ {s.estimated_min} min · cum {s.cumulative_lift_lb_per_person:,} lb 1P")
+                     f"~{s.estimated_min} min  ·  cum {s.cumulative_lift_lb_per_person:,} lb 1P")
 
         # Safety note (English)
         note = SAFETY_NOTE_EN.get(broad, "")
         if note:
             c.setFillColor(danger); c.setFont("Helvetica", 8)
             display = note if len(note) <= 46 else note[:44] + "…"
-            c.drawString(cx + 6, info_y - 36, f"⚠ {display}")
+            c.drawString(cx + 6, info_y - 36, f"! {display}")
 
 
 def _draw_mini_side(c, x, y, w, h, truck_spec, placements, stages_so_far,
                    border, danger):
-    from reportlab.lib.colors import HexColor
+    """Side view (length × height) — truck outline + ZONE-level fills.
 
-    c.setFillColor(HexColor("#FAFBFC")); c.setStrokeColor(border); c.setLineWidth(0.4)
-    c.rect(x, y, w, h, stroke=1, fill=1)
-    L = truck_spec["length_in"]; H = truck_spec["height_in"]
-    sx = (w - 4) / L; sy = (h - 4) / H
+    Shows cab→dock truck silhouette, door-track zone red, and zone
+    bounding boxes for every stage up to current. Previous stages dim
+    grey, current stage in its category colour. Worker reads at a
+    glance: "we're filling here, this is what's been loaded already."
+    """
+    from reportlab.lib.colors import HexColor, Color
+
+    L = float(truck_spec["length_in"])
+    H = float(truck_spec["height_in"])
+    # Inner box (with 2pt margin) — leave room for cab/dock labels at bottom
+    label_h = 10
+    inner_x = x + 4
+    inner_y = y + 4 + label_h
+    inner_w = w - 8
+    inner_h = h - 8 - label_h
+    sx = inner_w / L
+    sy = inner_h / H
     s = min(sx, sy)
     if s <= 0:
         return
+    tx = inner_x
+    ty = inner_y
 
-    dt_x = x + 2 + (L - DOOR_TRACK_LEN_IN) * s
-    dt_y = y + 2 + (H - DOOR_TRACK_LOSS_IN) * s
+    # 1) Truck outline (always drawn, clear silhouette)
+    c.setFillColor(HexColor("#FAFBFC"))
+    c.setStrokeColor(HexColor("#374151"))
+    c.setLineWidth(0.7)
+    c.rect(tx, ty, L * s, H * s, stroke=1, fill=1)
+
+    # 2) Door-track zone (rear 5 ft × top 10 in) — red hatched
+    dt_x = tx + (L - DOOR_TRACK_LEN_IN) * s
+    dt_y_top = ty + (H - DOOR_TRACK_LOSS_IN) * s
     c.setFillColor(HexColor("#FCA5A5"))
-    if hasattr(c, "setFillAlpha"): c.setFillAlpha(0.30)
-    c.rect(dt_x, dt_y, DOOR_TRACK_LEN_IN * s, DOOR_TRACK_LOSS_IN * s, stroke=0, fill=1)
+    if hasattr(c, "setFillAlpha"): c.setFillAlpha(0.40)
+    c.rect(dt_x, dt_y_top, DOOR_TRACK_LEN_IN * s, DOOR_TRACK_LOSS_IN * s,
+           stroke=0, fill=1)
     if hasattr(c, "setFillAlpha"): c.setFillAlpha(1)
+    # Dashed boundary
+    c.setStrokeColor(HexColor("#B91C1C")); c.setLineWidth(0.4)
+    c.setDash(2, 2)
+    c.line(dt_x, dt_y_top, dt_x, ty + H * s)
+    c.line(dt_x, dt_y_top, tx + L * s, dt_y_top)
+    c.setDash(1, 0)
 
-    seq_in_scope = set()
-    for st in stages_so_far:
-        for z in st.zones:
-            seq_in_scope |= set(z.item_seqs)
-    last_zone_seqs = set()
-    if stages_so_far:
-        for z in stages_so_far[-1].zones:
-            last_zone_seqs |= set(z.item_seqs)
+    # 3) Per-item rects coloured by stage state:
+    #    * previous stages — dim grey fill, thin border (loaded)
+    #    * current stage   — category colour, thicker border (loading NOW)
+    #    * future stages   — not drawn (haven't been loaded yet)
+    n_stages = len(stages_so_far)
+    if n_stages > 0:
+        cumulative_seqs: set = set()
+        for stg_idx, stg in enumerate(stages_so_far):
+            stg_seqs: set = set()
+            for zn in stg.zones:
+                stg_seqs |= set(zn.item_seqs)
+            new_seqs = stg_seqs - cumulative_seqs
+            cumulative_seqs |= stg_seqs
+            is_current = (stg_idx == n_stages - 1)
+            broad = stg.zones[0].broad_category if stg.zones else "other"
+            fill_col = _cat_color(broad) if is_current else HexColor("#D1D5DB")
+            stroke_col = HexColor("#111827") if is_current else HexColor("#9CA3AF")
+            line_w = 0.55 if is_current else 0.30
+            for p in placements:
+                if p.get("seq") not in new_seqs:
+                    continue
+                bx = tx + p["x_in"] * s
+                by = ty + p["z_in"] * s
+                bw = p["dim_x_in"] * s
+                bh = p["dim_z_in"] * s
+                c.setFillColor(fill_col)
+                c.setStrokeColor(stroke_col)
+                c.setLineWidth(line_w)
+                c.rect(bx, by, bw, bh, stroke=1, fill=1)
+        # Label the current stage's bounding region (above the items)
+        if stages_so_far:
+            last = stages_so_far[-1]
+            last_seqs: set = set()
+            for zn in last.zones:
+                last_seqs |= set(zn.item_seqs)
+            items_in_last = [p for p in placements if p.get("seq") in last_seqs]
+            if items_in_last:
+                lbx = tx + min(p["x_in"] for p in items_in_last) * s
+                lbx_end = tx + max(p["x_in"] + p["dim_x_in"] for p in items_in_last) * s
+                lby_top = ty + max(p["z_in"] + p["dim_z_in"] for p in items_in_last) * s
+                broad = last.zones[0].broad_category if last.zones else "other"
+                if broad == "other" and last.zones and last.zones[0].raw_category:
+                    lbl = last.zones[0].raw_category[:5].upper()
+                else:
+                    lbl = ZONE_GLYPH_EN.get(broad, broad[:3].upper())
+                lbl_x = (lbx + lbx_end) / 2
+                lbl_y = min(lby_top + 4, ty + H * s + 4)
+                lbl_w = c.stringWidth(lbl, "Helvetica-Bold", 7) + 6
+                c.setFillColor(HexColor("#FFFFFF"))
+                c.setStrokeColor(HexColor("#111827"))
+                c.setLineWidth(0.3)
+                c.roundRect(lbl_x - lbl_w/2, lbl_y - 5, lbl_w, 9,
+                            1.5, stroke=1, fill=1)
+                c.setFillColor(HexColor("#111827"))
+                c.setFont("Helvetica-Bold", 7)
+                c.drawCentredString(lbl_x, lbl_y - 3, lbl)
 
-    for p in placements:
-        if p.get("seq") not in seq_in_scope:
-            continue
-        bx = x + 2 + p["x_in"] * s
-        by = y + 2 + p["z_in"] * s
-        bw = p["dim_x_in"] * s
-        bh = p["dim_z_in"] * s
-        is_current = p.get("seq") in last_zone_seqs
-        c.setFillColor(HexColor("#1F2937") if is_current else HexColor("#D1D5DB"))
-        c.setStrokeColor(HexColor("#1F2937")); c.setLineWidth(0.2)
-        c.rect(bx, by, bw, bh, stroke=1, fill=1)
+    # 4) Cab / Dock anchor labels
+    c.setFillColor(HexColor("#6B7280"))
+    c.setFont("Helvetica-Bold", 6)
+    c.drawString(tx, ty - 8, "Cab")
+    c.setFillColor(HexColor("#B91C1C"))
+    c.drawRightString(tx + L * s, ty - 8, "Dock")
