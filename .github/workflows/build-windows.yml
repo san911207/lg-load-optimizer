@@ -59,8 +59,8 @@ jobs:
           secure: false
           username: ${{ secrets.SMTP_USERNAME }}
           password: ${{ secrets.SMTP_PASSWORD }}
-          from: san911207@gmail.com
-          to: sangkyu1.choi@lge.com
+          from: ${{ secrets.NOTIFY_FROM }}
+          to: ${{ secrets.NOTIFY_TO }}
           subject: "LG Load Optimizer — Windows .exe build #${{ github.run_number }}"
           html_body: |
             <p>안녕하세요,</p>

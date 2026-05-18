@@ -55,17 +55,62 @@ def cuin_to_cft(v: float) -> float: return v / 1728.0
 
 
 def broad_category(cat: str) -> str:
-    """Map detailed category (e.g. 'Refrigerator_FrenchDoor4Door') → broad bucket."""
-    c = (cat or "").lower()
-    # Order matters: longer/more-specific keys before substrings.
-    # "dishwasher" contains "washer", so check it first.
-    for key in ("refrigerator", "dishwasher", "microwave", "monitor", "washer", "dryer"):
-        if key in c:
-            return key
-    if "oven" in c or "range" in c:
+    """Map detailed category / Division name → broad bucket.
+
+    Recognises:
+      - English LG ERP terms ("Refrigerator", "Laundry-Washer", "Cooking-Oven", "HE", "AV")
+      - Korean ERP terms (냉장고/세탁기/건조기/식기세척기/전자레인지/오븐/렌지/TV/모니터/패널)
+      - Underscored sub-categories ("Refrigerator_FrenchDoor4Door", "TV_OLED_77")
+    Falls back to "other" only when no match.
+    """
+    c = (cat or "").lower().strip()
+    if not c:
+        return "other"
+
+    # Korean
+    if "냉장고" in cat:
+        return "refrigerator"
+    if "세탁기" in cat:
+        return "washer"
+    if "건조기" in cat:
+        return "dryer"
+    if "식기세척기" in cat or "식기" in cat:
+        return "dishwasher"
+    if "전자레인지" in cat or "전자렌지" in cat or "마이크로웨이브" in cat:
+        return "microwave"
+    if "오븐" in cat or "월오븐" in cat:
         return "oven"
-    if c.startswith("tv_") or c == "tv":
+    if "쿡탑" in cat or "렌지" in cat or "레인지" in cat or "스토브" in cat:
+        return "oven"
+    if "모니터" in cat:
+        return "monitor"
+    if "텔레비전" in cat or "티비" in cat:
         return "tv"
+
+    # English — longer keys first
+    for key in (
+        "refrigerator", "fridge", "dishwasher",
+        "microwave", "monitor", "washer", "washing", "laundry-w",
+        "dryer", "laundry-d", "cooktop", "wall_oven", "wall-oven",
+    ):
+        if key in c:
+            if key in ("washing", "laundry-w"):
+                return "washer"
+            if key == "laundry-d":
+                return "dryer"
+            if key in ("fridge",):
+                return "refrigerator"
+            if key in ("cooktop", "wall_oven", "wall-oven"):
+                return "oven"
+            return key
+
+    if "oven" in c or "range" in c or "stove" in c or "cooking" in c:
+        return "oven"
+    if c.startswith("tv_") or c == "tv" or " tv" in c or "television" in c or c.startswith("home_entertainment") or c == "he":
+        return "tv"
+    if c.startswith("av") or "audio" in c or "speaker" in c:
+        return "av"
+
     return "other"
 
 
@@ -242,13 +287,53 @@ def save_user_master(
     )
 
 
+# Column aliases — accept multiple spellings of the same field from
+# different ERP exports. The LEFT (canonical) is what the rest of the app
+# uses; the RIGHT list is alternatives recognised on upload.
+# Critical: LG ERP exports use "Divison name" (sic) instead of "category".
+# Without this alias the column was lost on upload and every model fell
+# back to the "Uncategorized" / "Other" bucket.
+MASTER_COL_ALIASES: Dict[str, list[str]] = {
+    "category": [
+        "divison_name", "division_name", "divison", "division",
+        "category_name", "cat_name", "product_category", "sub_division",
+        "subdivision", "subdivison",
+    ],
+    "model_code": ["model", "sku", "model_no", "model_number", "item_code"],
+    "width_in": ["width", "width_inch", "w_in", "w"],
+    # NOTE: "length_in" is NOT an alias for depth_in here — that would collide
+    # with Truck_Master's length_in (which is the truck's canonical length).
+    "depth_in": ["depth", "depth_inch", "d_in"],
+    "height_in": ["height", "height_inch", "h_in", "h"],
+    "weight_lb": ["weight", "weight_lbs", "weight_pound", "wt_lb", "wt"],
+    "stackable": ["stack", "can_stack", "stackable_yn"],
+    "fragile": ["fragile_yn", "is_fragile", "this_side_up"],
+}
+
+
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Lowercase + strip + collapse whitespace in column names."""
+    """
+    Lowercase + strip + collapse whitespace in column names, then apply
+    MASTER_COL_ALIASES so different ERP spellings collapse to canonical
+    field names (e.g. ``Divison name`` → ``category``).
+    """
     df = df.copy()
     df.columns = [
         str(c).strip().lower().replace(" ", "_").replace("(", "").replace(")", "")
         for c in df.columns
     ]
+    # Apply alias renames — only if the canonical column is not already
+    # present (don't overwrite an explicit category column).
+    rename_map: Dict[str, str] = {}
+    for canonical, aliases in MASTER_COL_ALIASES.items():
+        if canonical in df.columns:
+            continue
+        for alias in aliases:
+            if alias in df.columns:
+                rename_map[alias] = canonical
+                break
+    if rename_map:
+        df = df.rename(columns=rename_map)
     return df
 
 
@@ -1422,8 +1507,10 @@ def render_step2(
     # the work order and hand it to the forklift operator. Surfacing the
     # PDF generation here (not buried under section 6) shortens the
     # operations workflow by one scroll.
-    from engine.pdf_gen_v2 import generate_work_order_v2
-    pdf_hero_bytes = generate_work_order_v2(
+    # v4 layout — final CEO-approved (English, no pre-load / no close-out,
+    # KPI: Items / Length / Weight / Volume / Heavy on floor).
+    from engine.pdf_gen_v4 import generate_work_order_v4
+    pdf_hero_bytes = generate_work_order_v4(
         sim, load_id=load_id, truck_label=label,
         truck_spec=truck_spec, master=master,
     )
@@ -1570,12 +1657,11 @@ def render_step2(
     st.markdown("---")
     st.markdown("##### 6. Downloads")
 
-    # v2 1-page PDF — matches docs/v2-mockups/mockup-pdf-print.html.
-    # No silent fallback: if pdf_gen_v2 fails we surface the error so the
-    # dispatcher knows to refresh / re-export rather than handing the
-    # worker a malformed sheet (Eng Lead finding #4).
-    from engine.pdf_gen_v2 import generate_work_order_v2
-    pdf_bytes = generate_work_order_v2(
+    # v4 layout — see engine/pdf_gen_v4.py. No silent fallback: if it
+    # fails we surface the error so the dispatcher refreshes rather than
+    # handing the worker a malformed sheet (Eng Lead finding #4).
+    from engine.pdf_gen_v4 import generate_work_order_v4
+    pdf_bytes = generate_work_order_v4(
         sim, load_id=load_id, truck_label=label,
         truck_spec=truck_spec, master=master,
     )

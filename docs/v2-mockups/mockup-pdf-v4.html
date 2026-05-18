@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>PDF v4 — Work Order (English, no pre-load safety panel)</title>
+<style>
+  :root {
+    --bg: #F1F3F5; --surface: #FFFFFF; --border: #D1D5DB;
+    --text: #111827; --text2: #374151; --text3: #6B7280;
+    --accent: #1D4ED8; --accent-bg: #EFF6FF;
+    --gold: #92400E; --gold-bg: #FEF3C7;
+    --success: #065F46; --success-bg: #ECFDF5;
+    --warn: #B45309; --warn-bg: #FFFBEB;
+    --danger: #991B1B; --danger-bg: #FEE2E2;
+    --lg-red: #A50034;
+    --refrigerator: #85B7EB;
+    --washer: #ED93B1;
+    --pair: #E89BB0;
+    --dryer: #F4C0D1;
+    --dishwasher: #AFA9EC;
+    --oven: #F4A07A;
+    --microwave: #FBBF24;
+    --tv: #60A5FA;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 11.5px/1.4 -apple-system, "Segoe UI", "Inter", system-ui, sans-serif; background: var(--bg); color: var(--text); padding: 18px; }
+
+  /* US Letter landscape — 11 × 8.5 in @ 96dpi = 1056 × 816 */
+  .page {
+    width: 1056px; height: 816px;
+    background: white;
+    margin: 0 auto; padding: 20px 24px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.14);
+    display: grid;
+    grid-template-rows: auto auto auto auto auto 1fr auto;
+    gap: 7px;
+  }
+
+  /* HEADER */
+  .header { border-bottom: 1.5px solid var(--text); padding-bottom: 6px; display: flex; align-items: center; gap: 12px; }
+  .brand-dot { width: 26px; height: 26px; border-radius: 5px; background: var(--lg-red); display: flex; align-items: center; justify-content: center; color: white; font-weight: 800; font-size: 15px; }
+  .h-title h1 { margin: 0; font-size: 17px; }
+  .h-title .sub { font-size: 9px; color: var(--text3); font-weight: 600; }
+  .h-meta { margin-left: auto; text-align: right; font-size: 9.5px; line-height: 1.45; }
+  .h-meta b { color: var(--text); }
+  .h-meta .stamp { color: var(--text3); font-size: 9px; font-family: ui-monospace, SF Mono, monospace; }
+  .driver-line { display: flex; justify-content: space-between; font-size: 10px; color: var(--text2); padding-top: 4px; }
+  .anchor-red { color: var(--danger); font-weight: 700; }
+
+  /* KPI strip */
+  .kpis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; }
+  .kpis.kpis-5 { grid-template-columns: repeat(5, 1fr); }
+  .kpi { border: 1px solid var(--border); border-radius: 5px; padding: 8px 10px; background: white; text-align: center; }
+  .kpi.gold { background: var(--gold-bg); border-color: var(--gold); color: var(--gold); }
+  .kpi.success { background: var(--success-bg); border-color: var(--success); color: var(--success); }
+  .kpi.danger { background: var(--danger-bg); border-color: var(--danger); color: var(--danger); }
+  .kpi .lbl { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text3); }
+  .kpi.gold .lbl, .kpi.success .lbl, .kpi.danger .lbl { color: inherit; }
+  .kpi .val { font-size: 18px; font-weight: 800; margin: 3px 0; letter-spacing: -0.3px; }
+  .kpi .sub { font-size: 9px; color: var(--text3); }
+  .kpi.gold .sub, .kpi.success .sub, .kpi.danger .sub { color: inherit; }
+
+  /* Main row 1 — 3D + Zone breakdown */
+  .row { display: grid; gap: 5px; }
+  .row-3d { grid-template-columns: 1fr 1fr; }
+  .panel { background: white; border: 1px solid var(--border); border-radius: 5px; padding: 8px 10px; }
+  .panel-h { font-size: 10px; font-weight: 700; color: var(--text3); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+  .panel-h .num { background: var(--text); color: white; width: 14px; height: 14px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 8px; }
+
+  /* 3D iso */
+  .iso { position: relative; height: 192px; background: linear-gradient(180deg, #FAFBFC, #F3F4F6); border: 1px solid var(--border); border-radius: 3px; }
+  .iso-frame { position: absolute; left: 22px; right: 22px; top: 30px; bottom: 40px;
+    border: 2px solid #1F2937; border-radius: 3px;
+    transform: perspective(800px) rotateX(15deg) rotateY(-26deg);
+    transform-style: preserve-3d;
+  }
+  .iso .b { position: absolute; border: 1px solid rgba(31,41,55,0.4); border-radius: 1px; font-size: 8px; font-weight: 700; padding-top: 2px; text-align: center; color: rgba(0,0,0,0.65); }
+  .iso .b.fridge { background: var(--refrigerator); }
+  .iso .b.pair { background: var(--pair); }
+  .iso .b.dish { background: var(--dishwasher); }
+  .iso .b.oven { background: var(--oven); }
+  .iso .glyph { position: absolute; font-weight: 800; font-size: 9px; color: #111827; background: rgba(255,255,255,0.88); padding: 1px 4px; border-radius: 3px; letter-spacing: 0.3px; }
+  .iso .doorzone { position: absolute; right: 6%; top: 5%; width: 18%; height: 18%;
+    background: repeating-linear-gradient(45deg, rgba(220,38,38,0.18) 0 4px, transparent 4px 8px);
+    border-left: 1px dashed rgba(220,38,38,0.6); }
+  .iso .label-front { position: absolute; left: 18px; bottom: 12px; font-size: 9px; color: var(--text3); font-weight: 700; }
+  .iso .label-rear  { position: absolute; right: 18px; bottom: 12px; font-size: 9px; color: var(--danger); font-weight: 700; }
+
+  /* Zone table */
+  .ztable { width: 100%; border-collapse: collapse; font-size: 10px; }
+  .ztable th { text-align: left; font-size: 8.5px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.4px; padding: 4px 3px; border-bottom: 1px solid var(--border); }
+  .ztable td { padding: 5px 3px; border-bottom: 1px dotted #E5E7EB; }
+  .ztable .sw { width: 10px; height: 10px; display: inline-block; vertical-align: middle; border-radius: 2px; margin-right: 5px; }
+  .ztable .zid { font-weight: 800; }
+  .ztable .layout { font-family: ui-monospace, SF Mono, monospace; font-size: 9.5px; color: var(--text2); }
+
+  /* Dock lineup row (now full width since C removed) */
+  .lineup { padding: 8px 12px; }
+  .lineup h3 { margin: 0 0 5px 0; font-size: 10px; font-weight: 700; color: var(--text3); text-transform: uppercase; }
+  .lineup-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; font-size: 10px; }
+  .lineup-cols .wave-name { font-weight: 800; color: var(--text); margin-bottom: 3px; font-size: 10.5px; }
+  .lineup-cols .li { color: var(--text2); padding: 1px 0; }
+
+  /* Stage cards (5) */
+  .stages-wrap { display: flex; flex-direction: column; gap: 3px; }
+  .stages-title { font-size: 10px; color: var(--text3); font-weight: 700; text-transform: uppercase; }
+  .stages { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
+  .stage { background: white; border: 1px solid var(--border); border-radius: 5px; padding: 7px 9px; display: flex; flex-direction: column; }
+  .stage-head { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+  .stage .num { width: 20px; height: 20px; border-radius: 50%; color: white; font-weight: 800; display: flex; align-items: center; justify-content: center; font-size: 11px; }
+  .stage h4 { margin: 0; font-size: 11.5px; flex: 1; line-height: 1.2; }
+  .stage .crew { font-size: 9px; font-weight: 700; padding: 2px 7px; border-radius: 3px; }
+  .stage .crew.p2 { background: var(--gold-bg); color: var(--gold); }
+  .stage .crew.p1 { background: var(--success-bg); color: var(--success); }
+
+  /* Mini side-view (per stage) — taller now that close-out row removed */
+  .mini { height: 110px; background: #FAFBFC; border: 1px solid var(--border); border-radius: 2px; position: relative; margin-bottom: 6px; overflow: hidden; }
+  .mini .dz { position: absolute; right: 0; top: 0; bottom: 0; width: 18%;
+    background: repeating-linear-gradient(45deg, rgba(220,38,38,0.20) 0 3px, transparent 3px 6px); }
+  .mini .mb { position: absolute; bottom: 0; border: 1px solid rgba(0,0,0,0.5); }
+  .mini .mb.dim { background: #D1D5DB; }
+  .mini .mb.cur { background: #1F2937; }
+
+  .stage-meta { font-size: 9.5px; color: var(--text2); line-height: 1.55; }
+  .stage-meta .layout { font-family: ui-monospace, SF Mono, monospace; font-size: 9px; color: var(--text3); }
+  .stage-meta .time { font-weight: 700; color: var(--text); }
+  .stage-safety { font-size: 9px; color: var(--danger); margin-top: 4px; font-weight: 600; line-height: 1.3; }
+
+  /* Close-out row */
+  .row-close { grid-template-columns: 1fr 1fr 1fr; }
+  .close-card { padding: 7px 10px; border-radius: 5px; border: 1px solid var(--border); font-size: 9.5px; }
+  .close-card.secure { background: var(--success-bg); border-color: var(--success); color: var(--text); }
+  .close-card h4 { margin: 0 0 4px 0; font-size: 10px; }
+  .close-card.secure h4 { color: var(--success); }
+  .close-card .item { padding: 1.5px 0; color: var(--text2); }
+  .close-card .field { font-family: ui-monospace, SF Mono, monospace; font-size: 9px; color: var(--text3); padding: 1px 0; }
+
+  .foot { display: flex; justify-content: space-between; font-size: 9px; color: var(--text3); padding-top: 4px; border-top: 1px solid var(--border); }
+
+  .mockup-label { position: fixed; top: 12px; right: 12px; background: var(--text); color: white; padding: 5px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; opacity: 0.85; }
+</style>
+</head>
+<body>
+<div class="mockup-label">MOCKUP · PDF v4 (English)</div>
+
+<div class="page">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="brand-dot">L</div>
+    <div class="h-title">
+      <h1>LG Load Optimizer · Work Order Load 18143132</h1>
+      <div class="sub">Simplified v2.1 — Truck pick · Utilization · Loading guide</div>
+    </div>
+    <div class="h-meta">
+      <div><b>BOL</b> BOL-2026051802 · <b>Carrier</b> Penske · <b>Dock</b> 14</div>
+      <div><b>Appt</b> 2026-05-19 08:00 · <b>Route</b> RTE-NW-042 · <b>Truck</b> 26 ft Penske</div>
+      <div class="stamp">Issued by ceo@neumaxtech.com · 2026-05-18T17:55:00Z · v2.1.0</div>
+    </div>
+  </div>
+  <div class="driver-line">
+    <span><b>Driver:</b> J. Martinez</span>
+    <span class="anchor-red">↳ Left = driver-side, facing rear doors</span>
+  </div>
+
+  <!-- KPI 5 — Items / Length / Weight / Volume / Heavy on floor -->
+  <div class="kpis kpis-5">
+    <div class="kpi success"><div class="lbl">Items</div><div class="val">42 / 42</div><div class="sub">All fit ✓</div></div>
+    <div class="kpi gold"><div class="lbl">Length</div><div class="val">19.4 ft</div><div class="sub">Space-optimized</div></div>
+    <div class="kpi"><div class="lbl">Weight</div><div class="val">7,001 lb</div><div class="sub">70% util</div></div>
+    <div class="kpi"><div class="lbl">Volume</div><div class="val">947 ft³</div><div class="sub">56% util</div></div>
+    <div class="kpi"><div class="lbl">Heavy on floor</div><div class="val">13</div><div class="sub">z=0 verified</div></div>
+  </div>
+
+  <!-- Main 3D + Zone table -->
+  <div class="row row-3d">
+    <div class="panel">
+      <div class="panel-h"><span class="num">A</span> Isometric — rows × lanes × tiers</div>
+      <div class="iso">
+        <div class="iso-frame">
+          <div class="doorzone"></div>
+          <!-- Zone A · Refrigerator -->
+          <div class="b fridge" style="left:3%;top:30%;width:8%;height:65%;">R</div>
+          <div class="b fridge" style="left:11%;top:30%;width:8%;height:65%;">R</div>
+          <div class="b fridge" style="left:19%;top:30%;width:8%;height:65%;">R</div>
+          <div class="glyph" style="left:9%;top:24%;">REF</div>
+          <!-- Zone B · Washer + Dryer pair -->
+          <div class="b pair" style="left:28%;top:42%;width:8%;height:53%;">W</div>
+          <div class="b pair" style="left:28%;top:6%;width:8%;height:35%;">D</div>
+          <div class="b pair" style="left:36%;top:42%;width:8%;height:53%;">W</div>
+          <div class="b pair" style="left:36%;top:6%;width:8%;height:35%;">D</div>
+          <div class="b pair" style="left:44%;top:42%;width:8%;height:53%;">W</div>
+          <div class="b pair" style="left:44%;top:6%;width:8%;height:35%;">D</div>
+          <div class="glyph" style="left:35%;top:-6%;">W + D</div>
+          <!-- Zone C · Dishwasher -->
+          <div class="b dish" style="left:53%;top:54%;width:7%;height:41%;">Dw</div>
+          <div class="b dish" style="left:53%;top:12%;width:7%;height:41%;">Dw</div>
+          <div class="b dish" style="left:60%;top:54%;width:7%;height:41%;">Dw</div>
+          <div class="b dish" style="left:60%;top:12%;width:7%;height:41%;">Dw</div>
+          <div class="glyph" style="left:55%;top:0%;">DW</div>
+          <!-- Zone D · Wall Oven -->
+          <div class="b oven" style="left:69%;top:38%;width:7%;height:57%;">O</div>
+          <div class="b oven" style="left:69%;top:0%;width:7%;height:37%;">O</div>
+          <div class="glyph" style="left:69%;top:-7%;">OV</div>
+        </div>
+        <div class="label-front">← Cab (front)</div>
+        <div class="label-rear">Dock (rear) →</div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-h"><span class="num">B</span> Zone breakdown</div>
+      <table class="ztable">
+        <thead><tr><th>Zone · Model</th><th>Qty</th><th>Layout (R × L × T)</th><th>Length</th><th>Wt</th></tr></thead>
+        <tbody>
+          <tr><td><span class="sw" style="background:var(--refrigerator)"></span><span class="zid">A ·</span> Refrigerator</td><td>6</td><td class="layout">3 rows × 2 lanes × 1 tier</td><td>0 → 8.9 ft</td><td>2,052 lb</td></tr>
+          <tr><td><span class="sw" style="background:var(--pair)"></span><span class="zid">B ·</span> Washer + Dryer (paired)</td><td>8 + 8</td><td class="layout">3 rows × 3 lanes × 2 tiers</td><td>8.9 → 17.0 ft</td><td>2,992 lb</td></tr>
+          <tr><td><span class="sw" style="background:var(--dishwasher)"></span><span class="zid">C ·</span> Dishwasher</td><td>10</td><td class="layout">2 rows × 3 lanes × 2 tiers</td><td>17.0 → 21.8 ft</td><td>1,210 lb</td></tr>
+          <tr><td><span class="sw" style="background:var(--oven)"></span><span class="zid">D ·</span> Wall Oven</td><td>4</td><td class="layout">1 row × 2 lanes × 2 tiers</td><td>21.8 → 24.2 ft</td><td>748 lb</td></tr>
+          <tr style="color: var(--success); font-weight: 700;"><td>+ Free space (demote-to-floor candidates)</td><td>—</td><td class="layout" style="color: var(--success);">22 in × 8 ft × 8.5 ft</td><td>24.2 → 26.0 ft</td><td>112 ft³</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Dock lineup row (now full width — C pre-load section removed) -->
+  <div class="panel lineup">
+    <h3>C · Dock Lineup — wave split</h3>
+    <div class="lineup-cols">
+      <div>
+        <div class="wave-name">Wave 1 (lanes A · B · C simultaneous)</div>
+        <div class="li">1. Refrigerator × 6</div>
+        <div class="li">2. Washer (floor) × 8</div>
+      </div>
+      <div>
+        <div class="wave-name">Wave 2 (start when Wave 1 half-cleared)</div>
+        <div class="li">3. Dryer (on top of washer) × 8</div>
+        <div class="li">4. Dishwasher × 10</div>
+        <div class="li">5. Wall Oven × 4</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5 Stage cards -->
+  <div class="stages-wrap">
+    <div class="stages-title">D · 5-Stage loading — side view (progressively filled)</div>
+    <div class="stages">
+      <!-- Stage 1 -->
+      <div class="stage">
+        <div class="stage-head">
+          <span class="num" style="background: var(--refrigerator);">1</span>
+          <h4>Refrigerator</h4>
+          <span class="crew p2">2P</span>
+        </div>
+        <div class="mini">
+          <div class="dz"></div>
+          <div class="mb cur" style="left:2%;bottom:0;width:7%;height:70%;"></div>
+          <div class="mb cur" style="left:10%;bottom:0;width:7%;height:70%;"></div>
+          <div class="mb cur" style="left:18%;bottom:0;width:7%;height:70%;"></div>
+        </div>
+        <div class="stage-meta">
+          <div>6 units · 342 lb each</div>
+          <div class="layout">3 rows × 2 lanes × 1 tier</div>
+          <div class="time">⏱ 12 min · 1-person cum. 0 lb (2P)</div>
+        </div>
+        <div class="stage-safety">⚠ Strap to cab wall first. Hand-truck required.</div>
+      </div>
+      <!-- Stage 2 -->
+      <div class="stage">
+        <div class="stage-head">
+          <span class="num" style="background: var(--washer);">2</span>
+          <h4>Washer (floor)</h4>
+          <span class="crew p2">2P</span>
+        </div>
+        <div class="mini">
+          <div class="dz"></div>
+          <div class="mb dim" style="left:2%;bottom:0;width:7%;height:70%;"></div>
+          <div class="mb dim" style="left:10%;bottom:0;width:7%;height:70%;"></div>
+          <div class="mb dim" style="left:18%;bottom:0;width:7%;height:70%;"></div>
+          <div class="mb cur" style="left:27%;bottom:0;width:7%;height:48%;"></div>
+          <div class="mb cur" style="left:35%;bottom:0;width:7%;height:48%;"></div>
+          <div class="mb cur" style="left:43%;bottom:0;width:7%;height:48%;"></div>
+        </div>
+        <div class="stage-meta">
+          <div>8 units · 209 lb each</div>
+          <div class="layout">3 rows × 3 lanes × 1 tier</div>
+          <div class="time">⏱ 12 min · cum. 0 lb (2P)</div>
+        </div>
+        <div class="stage-safety">⚠ Verify 4 transit bolts engaged.</div>
+      </div>
+      <!-- Stage 3 -->
+      <div class="stage">
+        <div class="stage-head">
+          <span class="num" style="background: var(--dryer);">3</span>
+          <h4>Dryer (top stack)</h4>
+          <span class="crew p2">2P</span>
+        </div>
+        <div class="mini">
+          <div class="dz"></div>
+          <div class="mb dim" style="left:2%;bottom:0;width:7%;height:70%;"></div>
+          <div class="mb dim" style="left:10%;bottom:0;width:7%;height:70%;"></div>
+          <div class="mb dim" style="left:18%;bottom:0;width:7%;height:70%;"></div>
+          <div class="mb dim" style="left:27%;bottom:0;width:7%;height:48%;"></div>
+          <div class="mb dim" style="left:35%;bottom:0;width:7%;height:48%;"></div>
+          <div class="mb dim" style="left:43%;bottom:0;width:7%;height:48%;"></div>
+          <div class="mb cur" style="left:27%;bottom:48%;width:7%;height:32%;"></div>
+          <div class="mb cur" style="left:35%;bottom:48%;width:7%;height:32%;"></div>
+          <div class="mb cur" style="left:43%;bottom:48%;width:7%;height:32%;"></div>
+        </div>
+        <div class="stage-meta">
+          <div>8 units · 165 lb each</div>
+          <div class="layout">3 rows × 3 lanes × tier 2</div>
+          <div class="time">⏱ 8 min · cum. 0 lb (2P)</div>
+        </div>
+        <div class="stage-safety">⚠ Align precisely on washer. 2-person lift.</div>
+      </div>
+      <!-- Stage 4 -->
+      <div class="stage">
+        <div class="stage-head">
+          <span class="num" style="background: var(--dishwasher);">4</span>
+          <h4>Dishwasher</h4>
+          <span class="crew p1">1P</span>
+        </div>
+        <div class="mini">
+          <div class="dz"></div>
+          <div class="mb dim" style="left:2%;bottom:0;width:7%;height:70%;"></div>
+          <div class="mb dim" style="left:10%;bottom:0;width:7%;height:70%;"></div>
+          <div class="mb dim" style="left:18%;bottom:0;width:7%;height:70%;"></div>
+          <div class="mb dim" style="left:27%;bottom:0;width:7%;height:48%;"></div>
+          <div class="mb dim" style="left:35%;bottom:0;width:7%;height:48%;"></div>
+          <div class="mb dim" style="left:43%;bottom:0;width:7%;height:48%;"></div>
+          <div class="mb dim" style="left:27%;bottom:48%;width:7%;height:32%;"></div>
+          <div class="mb dim" style="left:35%;bottom:48%;width:7%;height:32%;"></div>
+          <div class="mb dim" style="left:43%;bottom:48%;width:7%;height:32%;"></div>
+          <div class="mb cur" style="left:52%;bottom:0;width:7%;height:35%;"></div>
+          <div class="mb cur" style="left:60%;bottom:0;width:7%;height:35%;"></div>
+          <div class="mb cur" style="left:52%;bottom:35%;width:7%;height:35%;"></div>
+          <div class="mb cur" style="left:60%;bottom:35%;width:7%;height:35%;"></div>
+        </div>
+        <div class="stage-meta">
+          <div>10 units · 121 lb each</div>
+          <div class="layout">2 rows × 3 lanes × 2 tiers</div>
+          <div class="time">⏱ 8 min · cum. 1,210 lb (1P)</div>
+        </div>
+        <div class="stage-safety">⚠ Hose side up. Prevent residual water leak.</div>
+      </div>
+      <!-- Stage 5 -->
+      <div class="stage">
+        <div class="stage-head">
+          <span class="num" style="background: var(--oven);">5</span>
+          <h4>Wall Oven + close-out</h4>
+          <span class="crew p1">1P + lift</span>
+        </div>
+        <div class="mini">
+          <div class="dz"></div>
+          <div class="mb dim" style="left:2%;bottom:0;width:7%;height:70%;"></div>
+          <div class="mb dim" style="left:10%;bottom:0;width:7%;height:70%;"></div>
+          <div class="mb dim" style="left:18%;bottom:0;width:7%;height:70%;"></div>
+          <div class="mb dim" style="left:27%;bottom:0;width:7%;height:48%;"></div>
+          <div class="mb dim" style="left:35%;bottom:0;width:7%;height:48%;"></div>
+          <div class="mb dim" style="left:43%;bottom:0;width:7%;height:48%;"></div>
+          <div class="mb dim" style="left:27%;bottom:48%;width:7%;height:32%;"></div>
+          <div class="mb dim" style="left:35%;bottom:48%;width:7%;height:32%;"></div>
+          <div class="mb dim" style="left:43%;bottom:48%;width:7%;height:32%;"></div>
+          <div class="mb dim" style="left:52%;bottom:0;width:7%;height:35%;"></div>
+          <div class="mb dim" style="left:60%;bottom:0;width:7%;height:35%;"></div>
+          <div class="mb dim" style="left:52%;bottom:35%;width:7%;height:35%;"></div>
+          <div class="mb dim" style="left:60%;bottom:35%;width:7%;height:35%;"></div>
+          <div class="mb cur" style="left:69%;bottom:0;width:7%;height:55%;"></div>
+          <div class="mb cur" style="left:69%;bottom:55%;width:7%;height:25%;"></div>
+        </div>
+        <div class="stage-meta">
+          <div>4 units · 187 lb each</div>
+          <div class="layout">1 row × 2 lanes × 2 tiers</div>
+          <div class="time">⏱ 6 min · cum. 1,958 lb (1P+lift)</div>
+        </div>
+        <div class="stage-safety">⚠ Verify door lock. No items on glass-top.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="foot">
+    <span>Engine: Heuristic+SA · solved 8.0s · demoted 0 item(s)</span>
+    <span>Load 18143132 · Page 1 of 1</span>
+  </div>
+
+</div>
+</body>
+</html>

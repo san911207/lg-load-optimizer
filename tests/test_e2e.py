@@ -208,16 +208,16 @@ class TestSimulationWithCustomMaster:
 
 
 class TestSampleLoadsMismatch:
-    """Reproduces the user's KeyError: LF29H8330S not found."""
+    """Reproduces the user's KeyError: FRIDGE-FD-001 not found."""
 
     def test_validation_catches_missing_sku_before_simulate(self):
         """The fix added to app.py — should detect missing SKU upfront."""
         master_df, _ = normalize_master_df(make_messy_master())
         master_dict = master_df.set_index("model_code").to_dict("index")
-        order = [{"model_code": "LF29H8330S", "quantity": 6}]  # not in custom master
+        order = [{"model_code": "FRIDGE-FD-001", "quantity": 6}]  # not in custom master
         requested = {l["model_code"] for l in order}
         missing = sorted(requested - set(master_dict.keys()))
-        assert "LF29H8330S" in missing  # validation in app.py would stop here
+        assert "FRIDGE-FD-001" in missing  # validation in app.py would stop here
 
 
 class TestTemplateGeneration:

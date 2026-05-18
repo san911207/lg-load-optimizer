@@ -29,8 +29,8 @@ def sample():
     truck_df = pd.read_excel(base, "Truck_Master")
     loads = pd.read_excel(base, "Loads")
     master = master_df.set_index("model_code").to_dict("index")
-    master["LDFN4542S"].update({"stackable": True, "load_bear_lb": 132.3, "fragile": False})
-    master["LWS3063ST"].update({"stackable": True, "load_bear_lb": 198.4, "fragile": False})
+    master["DISH-001"].update({"stackable": True, "load_bear_lb": 132.3, "fragile": False})
+    master["WOVEN-001"].update({"stackable": True, "load_bear_lb": 198.4, "fragile": False})
     trucks = truck_df.set_index("truck_type").to_dict("index")
     return master, trucks, loads
 
@@ -92,7 +92,7 @@ def test_b3_milp_solver_unavailable_returns_clean_result(sample, monkeypatch):
     from engine import milp_solver
 
     master, trucks, _ = sample
-    order = [{"model_code": "LDFN4542S", "quantity": 2}]
+    order = [{"model_code": "DISH-001", "quantity": 2}]
 
     class _BrokenSolver:
         """Mimics the PuLP solver interface; actualSolve is what prob.solve calls."""
@@ -190,7 +190,7 @@ def test_b7_sa_single_item_does_not_crash(sample):
     from engine.sa_refiner import refine
 
     master, trucks, _ = sample
-    order = [{"model_code": "LDFN4542S", "quantity": 1}]
+    order = [{"model_code": "DISH-001", "quantity": 1}]
     r = refine(order, master, trucks["26ft"], time_budget_s=1.0)
     assert len(r.placements) == 1
     assert r.iterations == 0      # the early-return path
@@ -209,8 +209,8 @@ def test_b8_milp_timeout_falls_back_to_sa(sample):
 
     master, trucks, _ = sample
     # A 5-item load is in the MILP routing range (≤15 items).
-    order = [{"model_code": "LDFN4542S", "quantity": 3},
-             {"model_code": "LWS3063ST", "quantity": 2}]
+    order = [{"model_code": "DISH-001", "quantity": 3},
+             {"model_code": "WOVEN-001", "quantity": 2}]
     # Aggressively short budget — MILP needs >1s to build the model.
     r = solve(order, master, trucks["26ft"], time_budget_s=0.5)
     # Result must be usable (either MILP managed to finish or fallback ran).

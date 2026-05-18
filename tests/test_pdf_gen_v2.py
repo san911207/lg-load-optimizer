@@ -15,8 +15,8 @@ def sample():
     truck_df = pd.read_excel(base, "Truck_Master")
     loads = pd.read_excel(base, "Loads")
     master = master_df.set_index("model_code").to_dict("index")
-    master["LDFN4542S"].update({"stackable": True, "load_bear_lb": 132.3, "fragile": False})
-    master["LWS3063ST"].update({"stackable": True, "load_bear_lb": 198.4, "fragile": False})
+    master["DISH-001"].update({"stackable": True, "load_bear_lb": 132.3, "fragile": False})
+    master["WOVEN-001"].update({"stackable": True, "load_bear_lb": 198.4, "fragile": False})
     trucks = truck_df.set_index("truck_type").to_dict("index")
     return master, trucks, loads
 
@@ -43,7 +43,7 @@ def test_pdf_v2_renders_for_real_load(sample):
 def test_pdf_v2_handles_small_load(sample):
     """Tiny 3-item load — PDF must still render cleanly."""
     master, trucks, _ = sample
-    order = [{"model_code": "LDFN4542S", "quantity": 3}]
+    order = [{"model_code": "DISH-001", "quantity": 3}]
     r = solve(order, master, trucks["26ft"], time_budget_s=5.0)
     pdf = generate_work_order_v2(r, "TEST", "26 ft", trucks["26ft"], master)
     assert pdf.startswith(b"%PDF-1.")
@@ -56,7 +56,7 @@ def test_pdf_v2_page_count_grows_with_large_loads(sample):
     (UX Director audit) or "1 of 1" footer lies about truncation.
     """
     master, trucks, _ = sample
-    order = [{"model_code": "LDFN4542S", "quantity": 100}]
+    order = [{"model_code": "DISH-001", "quantity": 100}]
     r = solve(order, master, trucks["53ft"], time_budget_s=5.0)
     pdf = generate_work_order_v2(
         r, load_id="LARGE", truck_label="53 ft Wabash",
@@ -73,7 +73,7 @@ def test_pdf_v2_position_label_uses_floor_not_z0(sample):
     never the internal coordinate 'z=0' (Tech Writer + Forklift Op fix).
     """
     master, trucks, _ = sample
-    order = [{"model_code": "LDFN4542S", "quantity": 3}]
+    order = [{"model_code": "DISH-001", "quantity": 3}]
     r = solve(order, master, trucks["26ft"], time_budget_s=4.0)
     pdf = generate_work_order_v2(
         r, load_id="POS-LBL", truck_label="26 ft",

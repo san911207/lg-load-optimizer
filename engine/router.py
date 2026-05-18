@@ -22,6 +22,7 @@ import time
 from typing import Any, Dict, List
 
 from engine.best_packer import simulate as heuristic_simulate
+from engine.demote_layer import post_process_demote
 from engine.domain_rules import (
     Severity,
     detect_pairs,
@@ -103,7 +104,7 @@ def solve(
                        time_budget_s=min(sa_budget, SA_DEFAULT_BUDGET_S))
         return _attach_audit(
             _wrap_sa(heur, sa, truck_spec, elapsed=time.monotonic() - start, master=master),
-            pair_info, master,
+            pair_info, master, truck_spec,
         )
 
     # heuristic
@@ -166,8 +167,26 @@ def _attach_audit(
     result: Dict[str, Any],
     pair_info: List,
     master: Dict[str, Dict[str, Any]],
+    truck_spec: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
-    """Run post-pack verification and attach the findings + pair count."""
+    """Run post-pack verification and attach the findings + pair count.
+
+    Also runs the Phase E post-process *demote* pass — CEO decision
+    (2026-05-18): after the engine picks the shortest arrangement, if
+    rear clearance ≥ 4 ft and the truck is below 80 % volume util,
+    demote any ≤ 80 lb 2nd-tier items to the floor so the worker
+    doesn't double-handle for no reason. Heavy items (380 lb fridges,
+    washers) are NEVER demoted (transit stability).
+    """
+    placements = result.get("placements", [])
+    if truck_spec is not None and placements:
+        metrics = result.get("metrics", {})
+        new_placements, n_demoted = post_process_demote(
+            placements, truck_spec, metrics,
+        )
+        result["placements"] = new_placements
+        result["demoted_items"] = n_demoted
+
     findings = verify(result.get("placements", []), master)
     result["pair_count"] = sum(p[2] for p in pair_info)
     result["audit_findings"] = [

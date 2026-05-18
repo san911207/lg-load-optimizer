@@ -41,13 +41,13 @@ def fake_simulation_result():
             "remaining_length_ft": 1.82,
         },
         "placements": [
-            {"seq": 1, "model_code": "LF29H8330S", "x_in": 0, "y_in": 0, "z_in": 0,
+            {"seq": 1, "model_code": "FRIDGE-FD-001", "x_in": 0, "y_in": 0, "z_in": 0,
              "dim_x_in": 900, "dim_y_in": 940, "dim_z_in": 1850, "weight_lb": 155, "lane": 0, "layer": 0},
-            {"seq": 2, "model_code": "LF29H8330S", "x_in": 0, "y_in": 940, "z_in": 0,
+            {"seq": 2, "model_code": "FRIDGE-FD-001", "x_in": 0, "y_in": 940, "z_in": 0,
              "dim_x_in": 900, "dim_y_in": 940, "dim_z_in": 1850, "weight_lb": 155, "lane": 1, "layer": 0},
-            {"seq": 7, "model_code": "WM4000HWA", "x_in": 2700, "y_in": 0, "z_in": 0,
+            {"seq": 7, "model_code": "WASHER-FL-001", "x_in": 2700, "y_in": 0, "z_in": 0,
              "dim_x_in": 830, "dim_y_in": 745, "dim_z_in": 1050, "weight_lb": 95, "lane": 0, "layer": 0},
-            {"seq": 10, "model_code": "WM4000HWA", "x_in": 2700, "y_in": 0, "z_in": 1050,
+            {"seq": 10, "model_code": "WASHER-FL-001", "x_in": 2700, "y_in": 0, "z_in": 1050,
              "dim_x_in": 830, "dim_y_in": 745, "dim_z_in": 1050, "weight_lb": 95, "lane": 0, "layer": 1},
         ],
     }
@@ -131,11 +131,11 @@ class TestRendering:
         fake_simulation_result["fits"] = False
         fake_simulation_result["unfitted_count"] = 2
         fake_simulation_result["unfitted_detail"] = [
-            {"model_code": "LWS3063ST", "quantity": 2}
+            {"model_code": "WOVEN-001", "quantity": 2}
         ]
         html = render_html_email("L002", fake_simulation_result)
         assert "DOES NOT FIT" in html
-        assert "LWS3063ST" in html
+        assert "WOVEN-001" in html
 
     def test_text_email_includes_summary(self, fake_simulation_result):
         text = render_text_email("L001", fake_simulation_result)

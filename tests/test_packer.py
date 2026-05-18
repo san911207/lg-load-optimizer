@@ -19,12 +19,12 @@ def master():
     df = pd.read_excel(xl, sheet_name="Model_Master")
     m = df.set_index("model_code").to_dict("index")
     # Apply known calibrations (US units)
-    m["LDFN4542S"]["stackable"] = True
-    m["LDFN4542S"]["load_bear_lb"] = 132.3
-    m["LDFN4542S"]["fragile"] = False
-    m["LWS3063ST"]["stackable"] = True
-    m["LWS3063ST"]["load_bear_lb"] = 198.4
-    m["LWS3063ST"]["fragile"] = False
+    m["DISH-001"]["stackable"] = True
+    m["DISH-001"]["load_bear_lb"] = 132.3
+    m["DISH-001"]["fragile"] = False
+    m["WOVEN-001"]["stackable"] = True
+    m["WOVEN-001"]["load_bear_lb"] = 198.4
+    m["WOVEN-001"]["fragile"] = False
     return m
 
 
@@ -53,11 +53,11 @@ def truck_53ft():
 @pytest.fixture
 def sample_order():
     return [
-        {"model_code": "LF29H8330S", "quantity": 6},
-        {"model_code": "WM4000HWA",  "quantity": 8},
-        {"model_code": "DLEX4000W",  "quantity": 8},
-        {"model_code": "LDFN4542S",  "quantity": 10},
-        {"model_code": "LWS3063ST",  "quantity": 4},
+        {"model_code": "FRIDGE-FD-001", "quantity": 6},
+        {"model_code": "WASHER-FL-001",  "quantity": 8},
+        {"model_code": "DRYER-EL-001",  "quantity": 8},
+        {"model_code": "DISH-001",  "quantity": 10},
+        {"model_code": "WOVEN-001",  "quantity": 4},
     ]
 
 
@@ -118,19 +118,19 @@ class TestLaneUtilization:
 
     def test_max_lanes_for_washer(self, sample_order, master, truck_26ft):
         result = simulate(sample_order, master, truck_26ft)
-        washer_placements = [p for p in result["placements"] if p["model_code"] == "WM4000HWA"]
+        washer_placements = [p for p in result["placements"] if p["model_code"] == "WASHER-FL-001"]
         unique_lanes = set(p["lane"] for p in washer_placements)
         assert len(unique_lanes) == 3, f"Washer should use 3 lanes, got {len(unique_lanes)}"
 
     def test_max_lanes_for_dishwasher(self, sample_order, master, truck_26ft):
         result = simulate(sample_order, master, truck_26ft)
-        dish_placements = [p for p in result["placements"] if p["model_code"] == "LDFN4542S"]
+        dish_placements = [p for p in result["placements"] if p["model_code"] == "DISH-001"]
         unique_lanes = set(p["lane"] for p in dish_placements)
         assert len(unique_lanes) == 3, f"Dishwasher should use 3 lanes, got {len(unique_lanes)}"
 
     def test_refrigerator_uses_2_lanes(self, sample_order, master, truck_26ft):
         result = simulate(sample_order, master, truck_26ft)
-        fridge_placements = [p for p in result["placements"] if p["model_code"] == "LF29H8330S"]
+        fridge_placements = [p for p in result["placements"] if p["model_code"] == "FRIDGE-FD-001"]
         unique_lanes = set(p["lane"] for p in fridge_placements)
         assert len(unique_lanes) == 2, f"Refrigerator should use 2 lanes, got {len(unique_lanes)}"
 
@@ -141,14 +141,14 @@ class TestStackingRules:
     def test_refrigerator_not_stacked(self, sample_order, master, truck_26ft):
         # Fridge is too tall to stack (1850mm = 72.8in × 2 = 145.6 > eff 91.97)
         result = simulate(sample_order, master, truck_26ft)
-        fridge_placements = [p for p in result["placements"] if p["model_code"] == "LF29H8330S"]
+        fridge_placements = [p for p in result["placements"] if p["model_code"] == "FRIDGE-FD-001"]
         layers = set(p["layer"] for p in fridge_placements)
         assert layers == {0}, "Refrigerator must not stack"
 
     def test_washer_dryer_stacked(self, sample_order, master, truck_26ft):
         # Same dim, stackable, fit under ceiling → ≥2-tier
         result = simulate(sample_order, master, truck_26ft)
-        wash_dry = [p for p in result["placements"] if p["model_code"] in ("WM4000HWA", "DLEX4000W")]
+        wash_dry = [p for p in result["placements"] if p["model_code"] in ("WASHER-FL-001", "DRYER-EL-001")]
         layers = set(p["layer"] for p in wash_dry)
         assert 0 in layers and 1 in layers, "Washer/dryer should be at least 2-tier"
 
@@ -157,7 +157,7 @@ class TestEdgeCases:
     """Edge cases."""
 
     def test_single_item(self, master, truck_26ft):
-        order = [{"model_code": "LF29H8330S", "quantity": 1}]
+        order = [{"model_code": "FRIDGE-FD-001", "quantity": 1}]
         result = simulate(order, master, truck_26ft)
         assert result["fits"]
         assert result["fitted_count"] == 1
@@ -170,7 +170,7 @@ class TestEdgeCases:
 
     def test_oversized_order_unfitted(self, master, truck_26ft):
         # Request way too much
-        order = [{"model_code": "LF29H8330S", "quantity": 100}]
+        order = [{"model_code": "FRIDGE-FD-001", "quantity": 100}]
         result = simulate(order, master, truck_26ft)
         assert result["fits"] is False
         assert result["unfitted_count"] > 0

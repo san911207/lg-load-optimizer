@@ -15,8 +15,8 @@ def sample_data():
     loads = pd.read_excel(base, "Loads")
 
     master = master_df.set_index("model_code").to_dict("index")
-    master["LDFN4542S"].update({"stackable": True, "load_bear_lb": 132.3, "fragile": False})
-    master["LWS3063ST"].update({"stackable": True, "load_bear_lb": 198.4, "fragile": False})
+    master["DISH-001"].update({"stackable": True, "load_bear_lb": 132.3, "fragile": False})
+    master["WOVEN-001"].update({"stackable": True, "load_bear_lb": 198.4, "fragile": False})
     trucks = truck_df.set_index("truck_type").to_dict("index")
     return master, trucks, loads
 
@@ -25,8 +25,8 @@ def test_router_picks_milp_for_small_load(sample_data):
     """Loads with ≤ MILP_MAX_ITEMS items should use MILP (or fall back gracefully)."""
     master, trucks, _ = sample_data
     # 5 items — small enough for MILP
-    order = [{"model_code": "LDFN4542S", "quantity": 3},
-             {"model_code": "LWS3063ST", "quantity": 2}]
+    order = [{"model_code": "DISH-001", "quantity": 3},
+             {"model_code": "WOVEN-001", "quantity": 2}]
     r = solve(order, master, trucks["26ft"], time_budget_s=30)
     assert r["fits"] is True
     assert r["engine"] in {"MILP", "Heuristic+SA(skel)", "Heuristic"}
@@ -63,7 +63,7 @@ def test_router_envelope_compatible(sample_data):
 def test_router_force_heuristic(sample_data):
     """force_engine='heuristic' should bypass MILP even on a small load."""
     master, trucks, _ = sample_data
-    order = [{"model_code": "LDFN4542S", "quantity": 3}]
+    order = [{"model_code": "DISH-001", "quantity": 3}]
     r = solve(order, master, trucks["26ft"], time_budget_s=30, force_engine="heuristic")
     assert r["engine"] == "Heuristic"
     assert r["fits"] is True

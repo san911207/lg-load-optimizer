@@ -14,8 +14,8 @@ def sample_data():
     truck_df = pd.read_excel(base, "Truck_Master")
     loads = pd.read_excel(base, "Loads")
     master = master_df.set_index("model_code").to_dict("index")
-    master["LDFN4542S"].update({"stackable": True, "load_bear_lb": 132.3, "fragile": False})
-    master["LWS3063ST"].update({"stackable": True, "load_bear_lb": 198.4, "fragile": False})
+    master["DISH-001"].update({"stackable": True, "load_bear_lb": 132.3, "fragile": False})
+    master["WOVEN-001"].update({"stackable": True, "load_bear_lb": 198.4, "fragile": False})
     trucks = truck_df.set_index("truck_type").to_dict("index")
     return master, trucks, loads
 
@@ -24,8 +24,8 @@ def test_sa_runs_and_returns_result(sample_data):
     """SA must run end-to-end and produce non-trivial output."""
     master, trucks, _ = sample_data
     order = [
-        {"model_code": "LDFN4542S", "quantity": 4},
-        {"model_code": "LWS3063ST", "quantity": 3},
+        {"model_code": "DISH-001", "quantity": 4},
+        {"model_code": "WOVEN-001", "quantity": 3},
     ]
     r = refine(order, master, trucks["26ft"], time_budget_s=3.0, seed=7)
     assert r.iterations > 0
@@ -85,8 +85,8 @@ def test_sa_deterministic_with_seed(sample_data):
     """Same seed + same budget should produce reproducible best-found."""
     master, trucks, _ = sample_data
     order = [
-        {"model_code": "LDFN4542S", "quantity": 3},
-        {"model_code": "LWS3063ST", "quantity": 3},
+        {"model_code": "DISH-001", "quantity": 3},
+        {"model_code": "WOVEN-001", "quantity": 3},
     ]
     r1 = refine(order, master, trucks["26ft"], time_budget_s=2.0, seed=11)
     r2 = refine(order, master, trucks["26ft"], time_budget_s=2.0, seed=11)
