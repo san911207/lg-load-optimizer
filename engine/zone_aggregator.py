@@ -118,6 +118,20 @@ def _broad(cat: str) -> str:
     return "other"
 
 
+def _zone_letter(idx: int) -> str:
+    """Return zone ID: A..Z, then AA, AB, … for overflow.
+
+    Resilient against any number of zones — the original
+    ``letters="ABCDEFGHIJKL"`` (12-char) cap crashed when an
+    LG-ERP master with many distinct SKU footprints produced
+    13+ zones (IndexError observed in build #22 .exe).
+    """
+    alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    if idx < len(alpha):
+        return alpha[idx]
+    return alpha[idx // len(alpha) - 1] + alpha[idx % len(alpha)]
+
+
 def aggregate_zones(
     placements: List[Dict[str, Any]],
     master: Dict[str, Dict[str, Any]],
@@ -126,33 +140,33 @@ def aggregate_zones(
     """
     Group placements into Zones for the 3D + breakdown table.
 
-    Grouping key = (broad_category, dim_x_in, dim_y_in, dim_z_in). Items
-    sharing a footprint AND category collapse into one zone.
+    Strategy (matches CEO target design 2026-05-18): group by
+    ``broad_category`` ONLY. Footprint variance within a category collapses
+    into aggregate layout dimensions (max rows × max lanes × max tiers).
 
-    Washer + Dryer pairs detected by ``pair_count`` are merged into a
-    single "paired" zone so the breakdown table shows "B · Washer + Dryer
-    (paired) — 8+8 — 3 rows × 3 lanes × 2 tiers".
+    The earlier (broad, footprint) key produced 30+ zones on real LG-ERP
+    masters where each SKU has slightly different dims; the table became
+    unreadable and the .exe crashed when the zone letter pool ran out.
+
+    Washer + Dryer is handled specially: when ``pair_count > 0`` the
+    "washer" + "dryer" categories merge into one "washer_dryer_pair"
+    zone so the breakdown shows ``B · Washer + Dryer (paired) — 8 + 8``.
     """
-    # Step 1: per-item canonical category (via master)
+    # Step 1: per-item canonical broad category
     enriched: List[Dict[str, Any]] = []
     for p in placements:
         cat = master.get(p["model_code"], {}).get("category", "") if master else p.get("category", "")
         enriched.append({**p, "_broad": _broad(cat)})
 
-    # Step 2: group by (broad, footprint)
-    groups: Dict[Tuple[str, float, float, float], List[Dict[str, Any]]] = {}
+    # Step 2: group by broad category only
+    groups: Dict[str, List[Dict[str, Any]]] = {}
     for p in enriched:
-        key = (p["_broad"], p["dim_x_in"], p["dim_y_in"], p["dim_z_in"])
-        groups.setdefault(key, []).append(p)
+        groups.setdefault(p["_broad"], []).append(p)
 
-    # Step 3: sort groups by minimum x (cab → dock)
-    sorted_groups = sorted(groups.items(), key=lambda kv: min(p["x_in"] for p in kv[1]))
-
-    # Step 4: collapse adjacent (washer, dryer) pairs at the same footprint
-    # if pair_count > 0.
-    zones: List[Zone] = []
-    used_indices: set = set()
-    letters = "ABCDEFGHIJKL"
+    # Step 3: order categories cab → dock by min(x)
+    def _min_x(items: List[Dict[str, Any]]) -> float:
+        return min(p["x_in"] for p in items) if items else 0.0
+    sorted_cats = sorted(groups.keys(), key=lambda k: _min_x(groups[k]))
 
     def _layout_of(items: List[Dict[str, Any]]) -> Tuple[int, int, int, str]:
         rows = len({round(p["x_in"], 1) for p in items})
@@ -160,75 +174,64 @@ def aggregate_zones(
         tiers = len({round(p["z_in"], 1) for p in items})
         return rows, lanes, tiers, f"{rows} rows × {lanes} lanes × {tiers} tier{'s' if tiers > 1 else ''}"
 
+    # Step 4: pair-collapse washer + dryer if both present
+    pair_zone_made = False
+    zones: List[Zone] = []
+    handled: set = set()
     z_idx = 0
-    for i, ((broad, dx, dy, dz), items) in enumerate(sorted_groups):
-        if i in used_indices:
-            continue
 
-        # Pair detection — if this is Washer and next group is Dryer at
-        # adjacent x range and matching footprint, merge.
-        paired = None
-        if broad == "washer" and pair_count > 0:
-            for j, ((b2, dx2, dy2, dz2), items2) in enumerate(sorted_groups):
-                if j == i or j in used_indices:
-                    continue
-                if b2 != "dryer":
-                    continue
-                if abs(dx2 - dx) > 1 or abs(dy2 - dy) > 1:
-                    continue
-                # adjacency check: shares at least one x value
-                xs1 = {round(p["x_in"], 0) for p in items}
-                xs2 = {round(p["x_in"], 0) for p in items2}
-                if xs1 & xs2:
-                    paired = (j, items2)
-                    break
-
-        glyph = KOREAN_ZONE_GLYPH.get(broad, "기")
-        kr = KOREAN_ZONE_LABEL.get(broad, "기타")
-
-        if paired is not None:
-            j, items2 = paired
-            used_indices.add(j)
-            combined = items + items2
-            rows, lanes, tiers, layout_str = _layout_of(combined)
-            avg_unit_wt = int(round(sum(p["weight_lb"] for p in combined) / max(len(combined), 1)))
-            zone = Zone(
-                zone_id=letters[z_idx],
-                broad_category="washer_dryer_pair",
-                kr_label="세탁기 + 건조기 (페어)",
-                kr_glyph="세건",
-                item_count=len(combined),
-                layout=layout_str,
-                rows=rows, lanes=lanes, tiers=tiers,
-                length_ft_start=round(min(p["x_in"] for p in combined) / 12.0, 1),
-                length_ft_end=round(max(p["x_in"] + p["dim_x_in"] for p in combined) / 12.0, 1),
-                weight_lb=int(round(sum(p["weight_lb"] for p in combined))),
-                unit_weight_lb=avg_unit_wt,
-                item_seqs=[p.get("seq", 0) for p in combined],
-                is_pair=True,
-            )
-        else:
-            rows, lanes, tiers, layout_str = _layout_of(items)
-            unit_wt = int(round(items[0]["weight_lb"])) if items else 0
-            zone = Zone(
-                zone_id=letters[z_idx],
-                broad_category=broad,
-                kr_label=kr,
-                kr_glyph=glyph,
-                item_count=len(items),
-                layout=layout_str,
-                rows=rows, lanes=lanes, tiers=tiers,
-                length_ft_start=round(min(p["x_in"] for p in items) / 12.0, 1),
-                length_ft_end=round(max(p["x_in"] + p["dim_x_in"] for p in items) / 12.0, 1),
-                weight_lb=int(round(sum(p["weight_lb"] for p in items))),
-                unit_weight_lb=unit_wt,
-                item_seqs=[p.get("seq", 0) for p in items],
-                is_pair=False,
-            )
-        zones.append(zone)
+    if pair_count > 0 and "washer" in groups and "dryer" in groups:
+        combined = groups["washer"] + groups["dryer"]
+        rows, lanes, tiers, layout_str = _layout_of(combined)
+        avg_unit_wt = int(round(sum(p["weight_lb"] for p in combined) / max(len(combined), 1)))
+        zones.append(Zone(
+            zone_id=_zone_letter(z_idx),
+            broad_category="washer_dryer_pair",
+            kr_label=KOREAN_ZONE_LABEL["washer"] + " + " + KOREAN_ZONE_LABEL["dryer"] + " (페어)",
+            kr_glyph=KOREAN_ZONE_GLYPH["washer"] + KOREAN_ZONE_GLYPH["dryer"],
+            item_count=len(combined),
+            layout=layout_str,
+            rows=rows, lanes=lanes, tiers=tiers,
+            length_ft_start=round(min(p["x_in"] for p in combined) / 12.0, 1),
+            length_ft_end=round(max(p["x_in"] + p["dim_x_in"] for p in combined) / 12.0, 1),
+            weight_lb=int(round(sum(p["weight_lb"] for p in combined))),
+            unit_weight_lb=avg_unit_wt,
+            item_seqs=[p.get("seq", 0) for p in combined],
+            is_pair=True,
+        ))
         z_idx += 1
-        used_indices.add(i)
+        handled.update({"washer", "dryer"})
+        pair_zone_made = True
 
+    # Step 5: emit one zone per remaining category, ordered by x position
+    for broad in sorted_cats:
+        if broad in handled:
+            continue
+        items = groups[broad]
+        rows, lanes, tiers, layout_str = _layout_of(items)
+        unit_wt = int(round(sum(p["weight_lb"] for p in items) / max(len(items), 1)))
+        zones.append(Zone(
+            zone_id=_zone_letter(z_idx),
+            broad_category=broad,
+            kr_label=KOREAN_ZONE_LABEL.get(broad, "기타"),
+            kr_glyph=KOREAN_ZONE_GLYPH.get(broad, "기"),
+            item_count=len(items),
+            layout=layout_str,
+            rows=rows, lanes=lanes, tiers=tiers,
+            length_ft_start=round(min(p["x_in"] for p in items) / 12.0, 1),
+            length_ft_end=round(max(p["x_in"] + p["dim_x_in"] for p in items) / 12.0, 1),
+            weight_lb=int(round(sum(p["weight_lb"] for p in items))),
+            unit_weight_lb=unit_wt,
+            item_seqs=[p.get("seq", 0) for p in items],
+            is_pair=False,
+        ))
+        z_idx += 1
+
+    # Sort zones by min-x so display order matches load order.
+    zones.sort(key=lambda z: z.length_ft_start)
+    # Reassign letters in display order
+    for i, z in enumerate(zones):
+        z.zone_id = _zone_letter(i)
     return zones
 
 
