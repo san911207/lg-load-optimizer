@@ -72,6 +72,10 @@ class Zone:
     unit_weight_lb: int
     item_seqs: List[int] = field(default_factory=list)
     is_pair: bool = False                  # washer+dryer chained
+    # When broad_category resolves to "other", carry the most-frequent
+    # raw Division-name value so the UI can show it instead of a generic
+    # "Other" — gives the dispatcher a clue about what wasn't matched.
+    raw_category: str = ""
 
 
 @dataclass
@@ -96,25 +100,102 @@ HEAVY_PER_PERSON_LB = 150.0      # threshold above which 2-person crew required
 
 
 def _broad(cat: str) -> str:
-    """Local copy of app.broad_category — kept here to avoid circular import."""
-    c = (cat or "").lower().strip()
+    """Local copy of app.broad_category — kept here to avoid circular import.
+
+    Aggressive matcher: covers English, Korean, and common LG-ERP
+    Divison-name abbreviations (HA/HE/AS/RAC/Cooking/Display/Audio/etc.).
+    Previously most LG-ERP rows fell through to "other" because the
+    Divison values are short codes, not full English category names.
+    """
+    raw = cat or ""
+    c = raw.lower().strip()
     if not c:
         return "other"
-    if "냉장고" in cat: return "refrigerator"
-    if "세탁기" in cat: return "washer"
-    if "건조기" in cat: return "dryer"
-    if "식기" in cat:   return "dishwasher"
-    if "전자레인지" in cat or "전자렌지" in cat: return "microwave"
-    if "오븐" in cat or "쿡탑" in cat or "렌지" in cat or "레인지" in cat: return "oven"
-    if "모니터" in cat: return "monitor"
-    for key in ("refrigerator", "fridge", "dishwasher", "microwave", "monitor", "washer", "washing"):
-        if key in c:
-            if key in ("washing",): return "washer"
-            if key == "fridge":     return "refrigerator"
-            return key
-    if "dryer" in c or "laundry-d" in c:           return "dryer"
-    if "oven" in c or "range" in c or "stove" in c: return "oven"
-    if c.startswith("tv") or "television" in c or c == "he": return "tv"
+
+    # Korean keywords (full)
+    if "냉장고" in raw: return "refrigerator"
+    if "세탁기" in raw: return "washer"
+    if "건조기" in raw: return "dryer"
+    if "식기" in raw:   return "dishwasher"
+    if "전자레인지" in raw or "전자렌지" in raw or "마이크로웨이브" in raw: return "microwave"
+    if "오븐" in raw or "월오븐" in raw: return "oven"
+    if "쿡탑" in raw or "렌지" in raw or "레인지" in raw or "스토브" in raw or "조리" in raw or "쿠킹" in raw: return "oven"
+    if "모니터" in raw: return "monitor"
+    if "텔레비전" in raw or "티비" in raw: return "tv"
+    if "에어컨" in raw or "공조" in raw: return "ac"
+
+    # English keyword list (longer/more-specific first, ALL substrings checked).
+    # Note we look in the *lowercased* string — this is permissive on purpose
+    # so "REF-CD-001", "RFG", "Refrigeration", "LG-FRIDGE-..." all match.
+    refrig_terms = ("refrigerator", "refrigeration", "fridge", "rfg", "ref-", "ref_", "rf-")
+    washer_terms = ("washer", "washing", "laundry-w", "laundry_w", "wash machine", "front load", "top load", "wash_")
+    dryer_terms  = ("dryer", "laundry-d", "laundry_d", "drying")
+    dish_terms   = ("dishwash", "dw-", "dw_")
+    micro_terms  = ("microwave", "mwo", "otr", "countertop microwave", "mw_")
+    oven_terms   = ("oven", "range", "stove", "cooktop", "cookt", "cooking", "rangetop", "induction", "wall_oven", "wall oven")
+    tv_terms     = ("television", " tv", "oled", "qned", "uhd", "lcd-tv", " lcd tv", "smart tv",
+                    "home entertain", "home_entertain", "home-entertain", "display")
+    monitor_terms= ("monitor", "gaming display", "ips display", "mon-", "mon_")
+    av_terms     = ("audio", "soundbar", "sound bar", "speaker", " av ", "home theater")
+    ac_terms     = ("air conditioner", "aircond", "hvac", "ac unit", "split ac", "rac", "ras", "split-ac")
+
+    # Refrigerator
+    for k in refrig_terms:
+        if k in c: return "refrigerator"
+    # Dishwasher must come before "washer" (substring "wash")
+    for k in dish_terms:
+        if k in c: return "dishwasher"
+    # Washer
+    for k in washer_terms:
+        if k in c: return "washer"
+    # Dryer
+    for k in dryer_terms:
+        if k in c: return "dryer"
+    # Microwave
+    for k in micro_terms:
+        if k in c: return "microwave"
+    # Monitor must come before TV (avoid "monitor" matching tv glob)
+    for k in monitor_terms:
+        if k in c: return "monitor"
+    # TV / display / HE
+    for k in tv_terms:
+        if k in c: return "tv"
+    # Cooking family
+    for k in oven_terms:
+        if k in c: return "oven"
+    # AV / audio
+    for k in av_terms:
+        if k in c: return "av"
+    # AC
+    for k in ac_terms:
+        if k in c: return "ac"
+
+    # LG short ERP codes (exact match on the trimmed string)
+    code_map = {
+        "h/a": "refrigerator",      # Home Appliance — heuristic to fridge
+        "ha":  "refrigerator",
+        "he":  "tv",                 # Home Entertainment
+        "av":  "av",                 # Audio/Video
+        "as":  "ac",                 # Air Solution
+        "rac": "ac",
+        "ref": "refrigerator",
+        "rfg": "refrigerator",
+        "wm":  "washer",
+        "dr":  "dryer",
+        "dw":  "dishwasher",
+        "mw":  "microwave",
+        "ov":  "oven",
+        "wo":  "oven",
+        "tv":  "tv",
+        "mn":  "monitor",
+    }
+    if c in code_map:
+        return code_map[c]
+    # First-token short code (e.g. "RF-001" → "rf")
+    first = c.split("-")[0].split("_")[0].split(" ")[0]
+    if first in code_map:
+        return code_map[first]
+
     return "other"
 
 
@@ -152,16 +233,20 @@ def aggregate_zones(
     "washer" + "dryer" categories merge into one "washer_dryer_pair"
     zone so the breakdown shows ``B · Washer + Dryer (paired) — 8 + 8``.
     """
-    # Step 1: per-item canonical broad category
+    # Step 1: per-item canonical broad category + remember raw cat
     enriched: List[Dict[str, Any]] = []
     for p in placements:
         cat = master.get(p["model_code"], {}).get("category", "") if master else p.get("category", "")
-        enriched.append({**p, "_broad": _broad(cat)})
+        enriched.append({**p, "_broad": _broad(cat), "_raw_cat": str(cat).strip()})
 
     # Step 2: group by broad category only
     groups: Dict[str, List[Dict[str, Any]]] = {}
+    raw_freq: Dict[str, Dict[str, int]] = {}
     for p in enriched:
         groups.setdefault(p["_broad"], []).append(p)
+        if p["_raw_cat"]:
+            raw_freq.setdefault(p["_broad"], {})
+            raw_freq[p["_broad"]][p["_raw_cat"]] = raw_freq[p["_broad"]].get(p["_raw_cat"], 0) + 1
 
     # Step 3: order categories cab → dock by min(x)
     def _min_x(items: List[Dict[str, Any]]) -> float:
@@ -210,6 +295,9 @@ def aggregate_zones(
         items = groups[broad]
         rows, lanes, tiers, layout_str = _layout_of(items)
         unit_wt = int(round(sum(p["weight_lb"] for p in items) / max(len(items), 1)))
+        # Most-frequent raw Division-name for this broad bucket
+        freq = raw_freq.get(broad, {})
+        most_freq_raw = max(freq.items(), key=lambda kv: kv[1])[0] if freq else ""
         zones.append(Zone(
             zone_id=_zone_letter(z_idx),
             broad_category=broad,
@@ -224,6 +312,7 @@ def aggregate_zones(
             unit_weight_lb=unit_wt,
             item_seqs=[p.get("seq", 0) for p in items],
             is_pair=False,
+            raw_category=most_freq_raw,
         ))
         z_idx += 1
 

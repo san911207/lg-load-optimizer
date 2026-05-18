@@ -110,17 +110,18 @@ def _stage_title_en(stage: Stage) -> str:
     """Translate the (possibly Korean) stage.title_kr into the canonical
     English label used on the work-order cards.
 
-    The aggregator emits stages whose title_kr was set in Korean; here we
-    map the broad category back to an English title because the CEO's
-    final design is English-only.
+    Falls back to the *raw* Division name when broad_category resolved
+    to "other" — gives the dispatcher a clue about what wasn't matched
+    instead of an opaque "Other".
     """
     if not stage.zones:
         return stage.title_en or "Stage"
-    broad = stage.zones[0].broad_category
+    z = stage.zones[0]
+    broad = z.broad_category
+    if broad == "other" and z.raw_category:
+        return z.raw_category[:24]
     base = ZONE_TITLE_EN.get(broad, broad.capitalize())
     if broad == "washer_dryer_pair":
-        # The aggregator splits the pair into two stages so each card
-        # represents one half.
         if "위" in stage.title_kr or "top" in stage.title_kr.lower() or "tier 2" in stage.layout:
             return "Dryer (top stack)"
         return "Washer (floor)"
@@ -436,7 +437,8 @@ def _draw_iso_with_zones(c, x, y, w, h, truck_spec, placements, zones,
         path = c.beginPath(); path.moveTo(*a); path.lineTo(*b); path.lineTo(*d); path.lineTo(*e); path.close()
         c.drawPath(path, stroke=1, fill=1)
 
-    # English glyph labels above each zone
+    # English glyph labels above each zone — use raw category for "other"
+    # so the dispatcher sees the unmatched Division name instead of "??".
     for z in zones:
         if not z.item_seqs:
             continue
@@ -447,7 +449,10 @@ def _draw_iso_with_zones(c, x, y, w, h, truck_spec, placements, zones,
         cy = sum(p["y_in"] + p["dim_y_in"]/2 for p in zps) / len(zps)
         cz_top = max(p["z_in"] + p["dim_z_in"] for p in zps)
         gx, gy = proj(cx, cy, cz_top + 3)
-        glyph = ZONE_GLYPH_EN.get(z.broad_category, "??")
+        if z.broad_category == "other" and z.raw_category:
+            glyph = z.raw_category[:4].upper()
+        else:
+            glyph = ZONE_GLYPH_EN.get(z.broad_category, z.broad_category[:3].upper())
         c.setFillColor(HexColor("#111827"))
         c.setFont("Helvetica-Bold", 9)
         c.drawCentredString(gx, gy, glyph)
@@ -463,10 +468,22 @@ def _draw_iso_with_zones(c, x, y, w, h, truck_spec, placements, zones,
 
 def _draw_zone_table(c, x, y, w, h, zones, text_primary, text_secondary,
                     text_tertiary, border):
+    """Draw the Zone breakdown table.
+
+    Column widths re-tuned 2026-05-18 after production overflow: the
+    Layout column was 27% which fits ~14 chars at Courier 9, but rows
+    like "8 rows × 6 lanes × 5 tiers" need 26 chars → text bled into
+    the Length column. Now Layout uses a compact "8R × 6L × 5T" form
+    and gets 22% width; the freed budget goes to Length/Weight.
+    """
     from reportlab.lib.colors import HexColor
-    headers = [("Zone · Model", w * 0.42), ("Qty", w * 0.09),
-               ("Layout (R × L × T)", w * 0.27),
-               ("Length", w * 0.12), ("Wt", w * 0.10)]
+    headers = [
+        ("Zone · Model",          w * 0.40),
+        ("Qty",                   w * 0.08),
+        ("Layout (R × L × T)",    w * 0.18),
+        ("Length",                w * 0.18),
+        ("Wt",                    w * 0.16),
+    ]
     rows = max(len(zones), 4)
     row_h = max(13, (h - 18) / max(rows + 1, 5))
     if row_h > 18: row_h = 18
@@ -487,10 +504,16 @@ def _draw_zone_table(c, x, y, w, h, zones, text_primary, text_secondary,
         c.setFillColor(text_primary); c.setFont("Helvetica-Bold", 9)
         c.drawString(cx + 14, row_y + 5, f"{z.zone_id} ·")
         c.setFont("Helvetica", 9)
-        c.drawString(cx + 28, row_y + 5,
-                     ZONE_TITLE_EN.get(z.broad_category, z.broad_category))
+        # Use raw division name when broad_category fell to "other" so
+        # the dispatcher sees the actual ERP value instead of "Other".
+        if z.broad_category == "other" and z.raw_category:
+            zone_title = z.raw_category[:18]
+        else:
+            zone_title = ZONE_TITLE_EN.get(z.broad_category, z.broad_category)
+        c.drawString(cx + 28, row_y + 5, zone_title)
         cx += headers[0][1]
 
+        # Qty
         c.setFont("Helvetica", 10); c.setFillColor(text_primary)
         if z.is_pair:
             half = z.item_count // 2
@@ -500,14 +523,19 @@ def _draw_zone_table(c, x, y, w, h, zones, text_primary, text_secondary,
             c.drawString(cx + 2, row_y + 5, str(z.item_count))
         cx += headers[1][1]
 
+        # Layout — compact form "8R × 6L × 5T" so it fits the column
         c.setFont("Courier", 9); c.setFillColor(text_secondary)
-        c.drawString(cx + 2, row_y + 5, z.layout)
+        layout_compact = f"{z.rows}R × {z.lanes}L × {z.tiers}T"
+        c.drawString(cx + 2, row_y + 5, layout_compact)
         cx += headers[2][1]
 
+        # Length
         c.setFont("Helvetica", 10); c.setFillColor(text_primary)
-        c.drawString(cx + 2, row_y + 5, f"{z.length_ft_start} → {z.length_ft_end} ft")
+        c.drawString(cx + 2, row_y + 5,
+                     f"{z.length_ft_start} → {z.length_ft_end} ft")
         cx += headers[3][1]
 
+        # Weight (right-aligned)
         c.drawRightString(cx + headers[4][1] - 4, row_y + 5,
                           f"{z.weight_lb:,} lb")
         c.setStrokeColor(HexColor("#E5E7EB")); c.setDash(1, 2); c.setLineWidth(0.3)
