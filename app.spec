@@ -20,7 +20,7 @@ for pkg in ("streamlit", "altair", "plotly", "narwhals", "pulp"):
 # Streamlit introspects installed packages — give it metadata
 for pkg in (
     "streamlit", "plotly", "pandas", "numpy", "altair", "openpyxl",
-    "reportlab", "Pillow", "pyarrow", "narwhals", "jinja2", "pulp",
+    "Pillow", "pyarrow", "narwhals", "jinja2", "pulp",
 ):
     try:
         datas += copy_metadata(pkg)
@@ -60,8 +60,6 @@ a = Analysis(
         "engine.router",
         "engine.domain_rules",
         "engine.explain",
-        "engine.pdf_gen_v2",
-        "engine.pdf_gen_v4",
         "engine.zone_aggregator",
         "engine.demote_layer",
         "engine.categorizer",

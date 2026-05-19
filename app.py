@@ -1101,154 +1101,6 @@ def build_zone_breakdown_df(
     return pd.DataFrame(rows)
 
 
-def render_walkthrough(
-    sim: Dict[str, Any],
-    master: Dict[str, Dict[str, Any]],
-    truck_spec: Dict[str, Any],
-    load_id: str,
-    chosen_key: str,
-) -> None:
-    """Fix 2 — Walk-through modal: one big card per step.
-
-    Replaces the unreadable 24-column side-view grid the Forklift Op
-    audit called out. Track current step in session_state so Prev/Done/
-    Next survive Streamlit reruns.
-    """
-    from engine.pdf_gen_v2 import (
-        _layer_label as _walk_layer_label,
-        _position_label as _walk_position_label,
-    )
-
-    placements = sim.get("placements", [])
-    if not placements:
-        st.info("No items to walk through.")
-        return
-
-    state_key = f"walk_step_{load_id}_{chosen_key}"
-    if state_key not in st.session_state:
-        st.session_state[state_key] = 0
-    step_idx = max(0, min(st.session_state[state_key], len(placements) - 1))
-    cur = placements[step_idx]
-
-    cat = (
-        master.get(cur["model_code"], {}).get("category", "")
-        if master else cur.get("category", "")
-    )
-    weight_lb = float(cur.get("weight_lb", 0))
-    is_heavy = weight_lb >= 150
-    layer_label = _walk_layer_label(cur, placements)
-    pos_label = _walk_position_label(cur)
-
-    # Same-category cluster context — "5 of 6 same-cat" so worker sees
-    # they're still in the same SKU group.
-    same_cat = [
-        p for p in placements
-        if (master.get(p["model_code"], {}).get("category", "") if master else "") == cat
-    ]
-    cat_index = same_cat.index(cur) + 1 if cur in same_cat else 1
-    cat_total = len(same_cat) or 1
-
-    # ── Card ──
-    n = len(placements)
-    heavy_chip = (
-        '<span style="background:#FEF3C7;color:#92400E;padding:3px 10px;'
-        'border-radius:5px;font-size:11px;font-weight:700;margin-right:6px;">'
-        '▲ HEAVY · 2-person lift</span>' if is_heavy else ""
-    )
-    cluster_chip = (
-        f'<span style="background:#EFF6FF;color:#1D4ED8;padding:3px 10px;'
-        f'border-radius:5px;font-size:11px;font-weight:700;margin-right:6px;">'
-        f'🧱 {cat} {cat_index} of {cat_total}</span>' if cat else ""
-    )
-
-    st.markdown(
-        f'<div style="background:linear-gradient(135deg,#FAFBFC,#FFFFFF);'
-        f'border:2px solid #2563EB;border-radius:14px;padding:20px 26px;'
-        f'box-shadow:0 6px 24px -10px rgba(37,99,235,0.18);">'
-        f'<div style="display:flex;justify-content:space-between;align-items:center;'
-        f'padding-bottom:12px;margin-bottom:14px;border-bottom:1px dashed #E5E7EB;">'
-        f'<div style="font-size:13px;color:#6B7280;">Step '
-        f'<span style="color:#2563EB;font-size:22px;font-weight:800;">{step_idx + 1}</span>'
-        f' of <b>{n}</b> · LIFO order</div>'
-        f'<div style="font-size:11px;color:#6B7280;font-weight:600;">'
-        f'{n - step_idx - 1} remaining</div>'
-        f'</div>'
-        f'<div style="font-size:22px;font-weight:800;color:#111827;'
-        f'font-family:ui-monospace,SF Mono,monospace;">📦 {cur["model_code"]}</div>'
-        f'<div style="font-size:13px;color:#4B5563;margin:4px 0 14px;">{cat or "—"}</div>'
-        f'<div style="margin-bottom:12px;">{heavy_chip}{cluster_chip}</div>'
-        f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 24px;'
-        f'padding:14px 0;border-top:1px solid #E5E7EB;border-bottom:1px solid #E5E7EB;">'
-        f'<div><div style="font-size:10px;color:#6B7280;text-transform:uppercase;'
-        f'letter-spacing:0.5px;font-weight:700;">Position</div>'
-        f'<div style="font-size:17px;font-weight:700;color:#111827;margin-top:3px;">'
-        f'{pos_label}</div></div>'
-        f'<div><div style="font-size:10px;color:#6B7280;text-transform:uppercase;'
-        f'letter-spacing:0.5px;font-weight:700;">Layer</div>'
-        f'<div style="font-size:17px;font-weight:700;color:#1D4ED8;margin-top:3px;">'
-        f'{layer_label}</div></div>'
-        f'<div><div style="font-size:10px;color:#6B7280;text-transform:uppercase;'
-        f'letter-spacing:0.5px;font-weight:700;">Weight</div>'
-        f'<div style="font-size:17px;font-weight:700;color:#111827;margin-top:3px;">'
-        f'{int(weight_lb):,} lb</div></div>'
-        f'<div><div style="font-size:10px;color:#6B7280;text-transform:uppercase;'
-        f'letter-spacing:0.5px;font-weight:700;">Size (W × D × H)</div>'
-        f'<div style="font-size:14px;font-weight:600;color:#111827;margin-top:3px;">'
-        f'{cur["dim_y_in"]:g} × {cur["dim_x_in"]:g} × {cur["dim_z_in"]:g} in</div></div>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-    # Up-next preview
-    if step_idx + 1 < n:
-        nxt = placements[step_idx + 1]
-        nxt_cat = (
-            master.get(nxt["model_code"], {}).get("category", "")
-            if master else ""
-        )
-        st.markdown(
-            f'<div style="margin-top:8px;padding:10px 14px;background:#F3F4F6;'
-            f'border-radius:8px;font-size:12px;color:#4B5563;">'
-            f'▶ Up next #{step_idx + 2}: '
-            f'<b style="font-family:ui-monospace,SF Mono,monospace;'
-            f'color:#111827;">{nxt["model_code"]}</b> ({nxt_cat})'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(
-            '<div style="margin-top:8px;padding:10px 14px;background:#ECFDF5;'
-            'border-radius:8px;font-size:13px;color:#065F46;font-weight:700;">'
-            '🎉 Last item — load complete after this step.'
-            '</div>',
-            unsafe_allow_html=True,
-        )
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # Nav buttons
-    nav_cols = st.columns([1, 1, 1, 2])
-    with nav_cols[0]:
-        if st.button("◀ Prev", disabled=step_idx == 0,
-                     use_container_width=True,
-                     key=f"walk_prev_{load_id}_{chosen_key}"):
-            st.session_state[state_key] = step_idx - 1
-            st.rerun()
-    with nav_cols[1]:
-        if st.button("Done ✓",
-                     use_container_width=True,
-                     key=f"walk_done_{load_id}_{chosen_key}"):
-            if step_idx + 1 < n:
-                st.session_state[state_key] = step_idx + 1
-                st.rerun()
-    with nav_cols[2]:
-        if st.button("Next ▶", disabled=step_idx + 1 >= n,
-                     use_container_width=True, type="primary",
-                     key=f"walk_next_{load_id}_{chosen_key}"):
-            st.session_state[state_key] = step_idx + 1
-            st.rerun()
-    with nav_cols[3]:
-        st.progress((step_idx + 1) / n, text=f"{step_idx + 1}/{n}")
-
 
 def render_load_sequence(df_zones: pd.DataFrame) -> None:
     if df_zones.empty:
@@ -1329,438 +1181,6 @@ def build_simple_excel(
     return buf.getvalue()
 
 
-def render_step2(
-    load_id: str,
-    sim_26: Dict[str, Any], sim_53: Dict[str, Any],
-    master: Dict[str, Dict[str, Any]],
-    trucks_map: Dict[str, Dict[str, Any]],
-    recommended_key: str,
-) -> None:
-    """
-    Combined Step 2: 3D overview (manager) + 2D loading sequence (worker) +
-    all downloads + email. One scrollable page so workers see the 3D context
-    before the 2D step-by-step guide.
-    """
-    st.markdown("#### Step 2 · Load & Work Order")
-
-    # Truck selector (default = recommended; keeps planner exploration option)
-    labels = {
-        "26ft": (
-            f"26ft Box Truck · Fits {sim_26['fitted_count']}/{sim_26['requested_count']}"
-            + ("" if sim_26["fits"] else f" · ⚠ {sim_26['unfitted_count']} unfitted")
-        ),
-        "53ft": (
-            f"53ft Dry Van · Fits {sim_53['fitted_count']}/{sim_53['requested_count']}"
-            + ("" if sim_53["fits"] else f" · ⚠ {sim_53['unfitted_count']} unfitted")
-        ),
-    }
-    options_keys = ["26ft", "53ft"]
-    default_idx = options_keys.index(recommended_key)
-    chosen_label = st.radio(
-        "Truck",
-        [labels[k] for k in options_keys],
-        index=default_idx,
-        horizontal=True,
-        key=f"truck_step2_{load_id}",
-    )
-    chosen_key = options_keys[[labels[k] for k in options_keys].index(chosen_label)]
-    sim = sim_26 if chosen_key == "26ft" else sim_53
-    truck_spec = trucks_map[chosen_key]
-    label = "26ft Box Truck" if chosen_key == "26ft" else "53ft Dry Van"
-
-    m = sim["metrics"]
-    # ── Engine badge + audit summary (v2) ─────────────────────────────
-    # Team review (Manager + CPO + Tech Writer): "Heuristic+SA" reads like
-    # "guess" to a non-technical user. Rebrand to outcome-focused labels
-    # — what the engine DID, not which algorithm ran.  (Dashboard D1)
-    engine_internal = sim.get("engine", "Heuristic")
-    is_optimal = sim.get("is_provable_optimal", False)
-    solve_time = sim.get("solve_time_s", 0)
-    if is_optimal:
-        badge_bg, badge_fg = "#FEF3C7", "#B45309"
-        badge_text = "★ Auto · Proven shortest"
-    elif "SA" in engine_internal:
-        badge_bg, badge_fg = "#ECFDF5", "#047857"
-        badge_text = "Auto · Space-optimized"
-    else:
-        badge_bg, badge_fg = "#F3F4F6", "#4B5563"
-        badge_text = "Auto · Fast arrangement"
-
-    pair_ct = sim.get("pair_count", 0)
-    blk = sim.get("audit_block_count", 0)
-    wrn = sim.get("audit_warn_count", 0)
-    audit_chips = ""
-    if blk:
-        # D2 — action-oriented BLOCK chip (was "⚠ {n} BLOCK" with no next step)
-        audit_chips += (
-            f'<span style="background:#FEF2F2;color:#B91C1C;padding:3px 9px;border-radius:5px;'
-            f'font-size:11px;font-weight:600;margin-left:6px;">'
-            f'⚠ {blk} loading rule violation(s) — see findings below</span>'
-        )
-    if wrn:
-        audit_chips += (
-            f'<span style="background:#FFFBEB;color:#B45309;padding:3px 9px;border-radius:5px;'
-            f'font-size:11px;font-weight:600;margin-left:6px;">△ {wrn} warning(s) — review below</span>'
-        )
-    if pair_ct:
-        audit_chips += (
-            f'<span style="background:#EFF6FF;color:#1D4ED8;padding:3px 9px;border-radius:5px;'
-            f'font-size:11px;font-weight:600;margin-left:6px;">⛓ {pair_ct} washer+dryer pair(s)</span>'
-        )
-    badge_html = (
-        f'<div style="margin:6px 0 10px 0;">'
-        f'<span style="background:{badge_bg};color:{badge_fg};padding:5px 11px;'
-        f'border-radius:6px;font-size:11px;font-weight:700;letter-spacing:0.3px;'
-        f'text-transform:uppercase;">{badge_text}</span>'
-        f'<span style="color:#6B7280;font-size:11px;margin-left:8px;">{solve_time:.1f}s</span>'
-        f'{audit_chips}'
-        f'</div>'
-    )
-    st.markdown(badge_html, unsafe_allow_html=True)
-
-    st.caption(
-        f"{label} · {sim['fitted_count']}/{sim['requested_count']} units · "
-        f"{m['x_used_ft']:.1f} ft used ({m['compactness_pct']:.0f}%)"
-        + (f" · {m['remaining_length_ft']:.1f} ft buffer" if sim["fits"] else "")
-    )
-
-    # Audit findings expander — visible only when something is flagged.
-    findings = sim.get("audit_findings", [])
-    if findings:
-        with st.expander(
-            f"⚠ Audit findings ({len(findings)})",
-            # D3 — auto-expand on BOTH blocks and warnings so the
-            # dispatcher cannot miss a yellow flag.
-            expanded=(blk + wrn) > 0,
-        ):
-            for f in findings:
-                sev = f.get("severity", "info")
-                color = {"block": "#B91C1C", "warn": "#B45309", "info": "#1D4ED8"}.get(sev, "#6B7280")
-                st.markdown(
-                    f'<div style="border-left:3px solid {color};padding:6px 10px;margin:4px 0;'
-                    f'background:#FAFAFA;border-radius:0 4px 4px 0;font-size:12px;">'
-                    f'<b style="color:{color};text-transform:uppercase;font-size:10px;">{sev}</b> · '
-                    f'<b>{f.get("rule","")}</b><br>'
-                    f'<span style="color:#4B5563;">{f.get("message","")}</span>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-
-    if not sim["placements"]:
-        st.warning("No placements to render. Return to Step 1.")
-        return
-
-    # ───── HERO ACTION · Print PDF (D6 — promoted from "6. Downloads") ─────
-    # The dispatcher's primary action after verifying the load is to print
-    # the work order and hand it to the forklift operator. Surfacing the
-    # PDF generation here (not buried under section 6) shortens the
-    # operations workflow by one scroll.
-    # v4 layout — final CEO-approved (English, no pre-load / no close-out,
-    # KPI: Items / Length / Weight / Volume / Heavy on floor).
-    from engine.pdf_gen_v4 import generate_work_order_v4
-    pdf_hero_bytes = generate_work_order_v4(
-        sim, load_id=load_id, truck_label=label,
-        truck_spec=truck_spec, master=master,
-    )
-    hero_cols = st.columns([2, 1])
-    with hero_cols[0]:
-        st.markdown(
-            f'<div style="background:linear-gradient(135deg,#FAFBFC,#FFFFFF);'
-            f'border:2px solid #2563EB;border-radius:10px;padding:12px 16px;'
-            f'box-shadow:0 6px 20px -8px rgba(37,99,235,0.18);">'
-            f'<div style="font-size:11px;color:#6B7280;text-transform:uppercase;'
-            f'letter-spacing:0.6px;font-weight:700;margin-bottom:4px;">'
-            f'Ready to load</div>'
-            f'<div style="font-size:15px;font-weight:600;color:#111827;">'
-            f'Print the work order and hand it to the forklift operator.</div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-    with hero_cols[1]:
-        st.download_button(
-            "🖨 Print PDF work order",
-            pdf_hero_bytes,
-            file_name=f"{load_id}_{chosen_key}_workorder.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-            key=f"pdf_hero_{load_id}_{chosen_key}",
-            type="primary",
-        )
-    st.markdown("---")
-
-    # ───── 1. 3D overall view ─────
-    st.markdown("##### 1. 3D overall view")
-    fig_3d = build_3d_figure(sim, truck_spec, master)
-    st.plotly_chart(
-        fig_3d, use_container_width=True,
-        key=f"step2_3d_{load_id}_{chosen_key}",
-    )
-    render_legend_chips(sim, master)
-
-    # ── Why this arrangement (natural-language explanation) ──
-    try:
-        from engine.explain import explain, explain_html
-        reasons = explain(sim, master, truck_spec)
-        if reasons:
-            st.markdown(
-                '<div style="font-size:13px;font-weight:600;color:#111827;'
-                'margin:14px 0 6px 0;">💡 Why this arrangement</div>',
-                unsafe_allow_html=True,
-            )
-            st.markdown(explain_html(reasons), unsafe_allow_html=True)
-    except Exception:
-        pass
-
-    # ───── 2. Zone breakdown + sequence ─────
-    st.markdown("##### 2. Zone breakdown — rows × lanes × tiers")
-    df_zones = build_zone_breakdown_df(sim, master)
-    st.dataframe(df_zones, hide_index=True, use_container_width=True)
-    st.markdown("**Load sequence**")
-    render_load_sequence(df_zones)
-
-    if sim["unfitted_detail"]:
-        st.warning(
-            "⚠ Unfitted — these units need a second truck or later shipment."
-        )
-        st.dataframe(
-            pd.DataFrame(sim["unfitted_detail"]),
-            hide_index=True, use_container_width=True,
-        )
-
-    zones = _group_zones(sim)
-
-    # ───── 3. Pre-load checklist ─────
-    st.markdown("##### 3. Pre-load checklist")
-    pc1, pc2 = st.columns(2)
-    with pc1:
-        st.markdown("**Tools & people**")
-        for item in [
-            "Hand truck × 2",
-            "Ratchet strap × 4",
-            "Moving blanket × 6",
-            "2 workers minimum",
-            "Safety shoes + gloves",
-        ]:
-            st.markdown(f"☐ {item}")
-    with pc2:
-        st.markdown("**Dock lineup order (closest → far)**")
-        for i, ps in enumerate(zones, 1):
-            st.markdown(f"{i}. {_zone_category_label(ps, master)} × {len(ps)}")
-
-    # ───── 4. Loading sequence — Walk-through OR full grid ─────
-    # Fix 2 — Walk-through modal lets the dispatcher (or worker reading
-    # over their shoulder) step through one item at a time with a big
-    # readable card. Toggle defaults to "Walk-through" because the old
-    # cramped side-view grid was unreadable (Forklift Op audit).
-    st.markdown("##### 4. Loading sequence")
-    seq_mode = st.radio(
-        "View",
-        ["🎯 Walk-through (recommended)", "📋 Full grid"],
-        index=0, horizontal=True,
-        label_visibility="collapsed",
-        key=f"seq_mode_{load_id}_{chosen_key}",
-    )
-    if seq_mode.startswith("🎯"):
-        render_walkthrough(sim, master, truck_spec, load_id, chosen_key)
-        # Skip the legacy side-view grid — covered by walk-through above
-        return
-
-    # Legacy full grid (kept for users who want every step visible at once)
-    n_steps = len(zones) + 1
-    seq_cols = st.columns(n_steps)
-    for zi, ps in enumerate(zones):
-        with seq_cols[zi]:
-            marker = CIRCLED[zi] if zi < len(CIRCLED) else f"{zi + 1}."
-            st.markdown(f"**{marker} {_zone_category_label(ps, master)}**")
-            fig_side = _make_side_view(sim, truck_spec, zones, zi, master)
-            st.plotly_chart(
-                fig_side, use_container_width=True,
-                config={"displayModeBar": False},
-                key=f"step2_side_{load_id}_{chosen_key}_{zi}",
-            )
-            st.caption(_step_range_label(ps))
-            st.caption(f"💡 {_step_tip(ps, master)}")
-    with seq_cols[-1]:
-        st.markdown("**✓ Secure & inspect**")
-        fig_final = _make_side_view(sim, truck_spec, zones, len(zones) - 1, master)
-        st.plotly_chart(
-            fig_final, use_container_width=True,
-            config={"displayModeBar": False},
-            key=f"step2_side_{load_id}_{chosen_key}_final",
-        )
-        st.caption("Final")
-        st.caption("💡 Strap rows · close door · LIFO unload")
-
-    # ───── 5. Final secure & inspect ─────
-    st.markdown("##### 5. ✓ Final secure & inspect")
-    fc1, fc2 = st.columns(2)
-    with fc1:
-        st.markdown("☐ 4 ratchet straps tight")
-        st.markdown("☐ Rear 10\" track clear")
-    with fc2:
-        st.markdown("☐ ↑ This Side Up arrows verified")
-        st.markdown("☐ Door rolled down & sealed")
-
-    # ───── 6. Downloads + Email ─────
-    st.markdown("---")
-    st.markdown("##### 6. Downloads")
-
-    # v4 layout — see engine/pdf_gen_v4.py. No silent fallback: if it
-    # fails we surface the error so the dispatcher refreshes rather than
-    # handing the worker a malformed sheet (Eng Lead finding #4).
-    from engine.pdf_gen_v4 import generate_work_order_v4
-    pdf_bytes = generate_work_order_v4(
-        sim, load_id=load_id, truck_label=label,
-        truck_spec=truck_spec, master=master,
-    )
-    excel_bytes = build_simple_excel(sim, load_id, chosen_key, master, trucks_map)
-    html_bytes = fig_3d.to_html(include_plotlyjs="cdn", full_html=True).encode("utf-8")
-
-    dc1, dc2, dc3 = st.columns(3)
-    with dc1:
-        st.download_button(
-            "📊 Excel report",
-            excel_bytes,
-            file_name=f"{load_id}_{chosen_key}_load_report.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-            key=f"excel_dl_{load_id}_{chosen_key}",
-        )
-    with dc2:
-        st.download_button(
-            "🖨 Print PDF work order",
-            pdf_bytes,
-            file_name=f"{load_id}_{chosen_key}_workorder.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-            key=f"pdf_dl_{load_id}_{chosen_key}",
-        )
-    with dc3:
-        st.download_button(
-            "⬇ Interactive 3D HTML",
-            html_bytes,
-            file_name=f"{load_id}_{chosen_key}_3d.html",
-            mime="text/html",
-            use_container_width=True,
-            key=f"html_dl_{load_id}_{chosen_key}",
-        )
-
-    # Email panel — save attachments to OUT_DIR so render_email_panel can attach them
-    try:
-        pdf_path = OUT_DIR / f"{load_id}_{chosen_key}_workorder.pdf"
-        pdf_path.write_bytes(pdf_bytes)
-        excel_path = OUT_DIR / f"{load_id}_{chosen_key}_load_report.xlsx"
-        excel_path.write_bytes(excel_bytes)
-        html_path = OUT_DIR / f"{load_id}_{chosen_key}_3d.html"
-        fig_3d.write_html(str(html_path), include_plotlyjs="cdn", full_html=True)
-
-        from engine.email_ui import render_email_panel
-        render_email_panel(
-            simulation_result=sim,
-            load_id=load_id,
-            attachments=[pdf_path, excel_path, html_path],
-            truck_type=chosen_key,
-        )
-    except Exception as exc:  # noqa: BLE001 — surface unexpected wiring errors
-        st.expander("📧 Send by email (unavailable)").write(f"Email panel error: {exc}")
-
-
-# =========================================================================
-# Step 2-B helpers (worker side-view sequence)
-# =========================================================================
-def _hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
-    h = hex_color.lstrip("#")
-    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
-
-
-def _make_side_view(
-    sim: Dict[str, Any],
-    truck_spec: Dict[str, Any],
-    zones: List[List[Dict[str, Any]]],
-    step_idx: int,
-    master: Dict[str, Dict[str, Any]],
-) -> go.Figure:
-    """Side-view (X-Z plane) for one loading step."""
-    L = truck_spec["length_in"]
-    H = truck_spec["height_in"]
-
-    fig = go.Figure()
-    # Truck outer outline
-    fig.add_shape(
-        type="rect", x0=0, y0=0, x1=L, y1=H,
-        line=dict(color="#9CA3AF", width=1, dash="dot"),
-        fillcolor="rgba(0,0,0,0)", layer="below",
-    )
-    # Door track (red wash)
-    fig.add_shape(
-        type="rect",
-        x0=L - DOOR_TRACK_LENGTH_IN, y0=H - DOOR_TRACK_LOSS_IN,
-        x1=L, y1=H,
-        line=dict(width=0),
-        fillcolor="rgba(220,38,38,0.18)", layer="below",
-    )
-
-    for zi, ps in enumerate(zones):
-        if zi > step_idx:
-            xmin = min(p["x_in"] for p in ps)
-            xmax = max(p["x_in"] + p["dim_x_in"] for p in ps)
-            zmax = max(p["z_in"] + p["dim_z_in"] for p in ps)
-            fig.add_shape(
-                type="rect", x0=xmin, y0=0, x1=xmax, y1=zmax,
-                line=dict(color="#9CA3AF", width=1, dash="dash"),
-                fillcolor="rgba(0,0,0,0)",
-            )
-            continue
-        is_current = (zi == step_idx)
-        alpha = 0.95 if is_current else 0.35
-        stroke_w = 1.4 if is_current else 0.7
-        for p in ps:
-            cat = broad_category(master[p["model_code"]]["category"])
-            c = CAT_COLORS.get(cat, CAT_COLORS["other"])
-            r, g, b = _hex_to_rgb(c["front"])
-            fig.add_shape(
-                type="rect",
-                x0=p["x_in"], y0=p["z_in"],
-                x1=p["x_in"] + p["dim_x_in"], y1=p["z_in"] + p["dim_z_in"],
-                line=dict(color=c["stroke"], width=stroke_w),
-                fillcolor=f"rgba({r},{g},{b},{alpha})",
-            )
-
-    fig.update_layout(
-        xaxis=dict(range=[-50, L + 50], showgrid=False, zeroline=False, visible=False),
-        yaxis=dict(range=[-50, H + 50], showgrid=False, zeroline=False, visible=False,
-                   scaleanchor="x", scaleratio=1),
-        height=130,
-        margin=dict(l=2, r=2, t=2, b=2),
-        plot_bgcolor="white", paper_bgcolor="white", showlegend=False,
-    )
-    return fig
-
-
-def _step_tip(ps: List[Dict[str, Any]], master: Dict[str, Dict[str, Any]]) -> str:
-    cats = sorted({broad_category(master[p["model_code"]]["category"]) for p in ps})
-    layers = max(p["layer"] for p in ps) + 1
-    if "washer" in cats and "dryer" in cats:
-        return "Washer floor → Dryer top (paired 2-tier)"
-    if layers > 1:
-        return f"{cats[0].capitalize()} 2-tier · check load_bear"
-    if "refrigerator" in cats:
-        return "Heavy first · cab end · 60/40 weight rule"
-    if "microwave" in cats:
-        return "Small items rear · LIFO unload"
-    if "dishwasher" in cats:
-        return "Stable bottom · stack same-model only"
-    return f"{cats[0].capitalize()}"
-
-
-def _step_range_label(ps: List[Dict[str, Any]]) -> str:
-    xmin = min(p["x_in"] for p in ps) / 12.0
-    xmax = max(p["x_in"] + p["dim_x_in"] for p in ps) / 12.0
-    return f"{xmin:.1f} → {xmax:.1f} ft"
-
-
-
-
 # =========================================================================
 # Step 2 v4 — dashboard mirroring the PDF v4 work-order layout
 # =========================================================================
@@ -1775,12 +1195,18 @@ def _build_stage_mini_view(
     stages_so_far: list,
     current_stage_idx: int,
 ) -> "go.Figure":
-    """Build one mini side-view (length × height) for stage card N.
+    """Side-view loading-guide card body.
 
-    Truck silhouette + door-track zone + per-item rectangles. Items in
-    stages BEFORE the current one render dim grey (already loaded);
-    items in the current stage render in their category colour
-    (loading NOW); future-stage items aren't drawn.
+    Visual language (Q2 CEO direction — loading guide, not safety):
+      • Truck silhouette in light grey
+      • Previously-loaded items: light-grey ghost (context)
+      • Current-stage items: bright blue (where to load NOW)
+      • Down arrow ↓ over current-stage centroid (precise placement cue)
+      • "⬅ FRONT" / "REAR 🚪" labels stamped at the top corners
+      • Door-track wash retained — workers still need to clear it
+
+    Safety colour/badge layer is intentionally removed at the caller level
+    per CEO direction; this view is pure positional guidance.
     """
     import plotly.graph_objects as go
     L = float(truck_spec["length_in"])
@@ -1789,31 +1215,30 @@ def _build_stage_mini_view(
     DT_LOSS = 10.0
 
     placements = sim.get("placements", [])
-    cat_color = {
-        "refrigerator": "#85B7EB", "washer": "#ED93B1", "dryer": "#F4C0D1",
-        "washer_dryer_pair": "#E89BB0", "dishwasher": "#AFA9EC",
-        "microwave": "#FBBF24", "oven": "#F4A07A", "tv": "#60A5FA",
-        "monitor": "#22D3EE", "av": "#34D399", "ac": "#5EEAD4",
-        "other": "#D1D5DB",
-    }
+    CUR_FILL = "#1D4ED8"
+    CUR_EDGE = "#1E40AF"
+    GHOST_FILL = "#E2E8F0"
+    GHOST_EDGE = "#CBD5E1"
 
     shapes = []
-    # Truck silhouette
+    # Truck silhouette (light grey wall)
     shapes.append(dict(
         type="rect", x0=0, y0=0, x1=L, y1=H,
-        line=dict(color="#374151", width=2), fillcolor="rgba(250,251,252,0)",
-        layer="below",
+        line=dict(color="#94A3B8", width=2),
+        fillcolor="#F8FAFC", layer="below",
     ))
-    # Door-track zone (red wash)
+    # Door-track zone (faded red)
     shapes.append(dict(
         type="rect",
         x0=L - DT_LEN, y0=H - DT_LOSS, x1=L, y1=H,
         line=dict(color="#B91C1C", width=1, dash="dash"),
-        fillcolor="rgba(220,38,38,0.32)", layer="below",
+        fillcolor="rgba(220,38,38,0.18)", layer="below",
     ))
 
-    # Per-stage cumulative items
+    # Cumulative items: ghost for prior stages, bright blue for current
     cumulative_seqs: set = set()
+    cur_xs: list = []   # to compute arrow centroid
+    cur_top_y: float = 0.0
     for stg_idx, stg in enumerate(stages_so_far[: current_stage_idx + 1]):
         stg_seqs: set = set()
         for zn in stg.zones:
@@ -1821,29 +1246,23 @@ def _build_stage_mini_view(
         new_seqs = stg_seqs - cumulative_seqs
         cumulative_seqs |= stg_seqs
         is_current = (stg_idx == current_stage_idx)
-        if stg.zones:
-            broad = stg.zones[0].broad_category
-        else:
-            broad = "other"
-        if is_current:
-            fill = cat_color.get(broad, "#D1D5DB")
-            line_col = "#111827"
-            line_w = 1.4
-        else:
-            fill = "#E5E7EB"          # dim grey for already-loaded
-            line_col = "#9CA3AF"
-            line_w = 0.6
+        fill = CUR_FILL if is_current else GHOST_FILL
+        line_col = CUR_EDGE if is_current else GHOST_EDGE
+        line_w = 1.6 if is_current else 0.7
         for p in placements:
             if p.get("seq") not in new_seqs:
                 continue
+            x0 = p["x_in"]; x1 = x0 + p["dim_x_in"]
+            y0 = p["z_in"]; y1 = y0 + p["dim_z_in"]
             shapes.append(dict(
                 type="rect",
-                x0=p["x_in"], y0=p["z_in"],
-                x1=p["x_in"] + p["dim_x_in"],
-                y1=p["z_in"] + p["dim_z_in"],
+                x0=x0, y0=y0, x1=x1, y1=y1,
                 line=dict(color=line_col, width=line_w),
                 fillcolor=fill, layer="above",
             ))
+            if is_current:
+                cur_xs.append((x0 + x1) / 2)
+                cur_top_y = max(cur_top_y, y1)
 
     fig = go.Figure()
     fig.update_layout(
@@ -1853,24 +1272,36 @@ def _build_stage_mini_view(
             fixedrange=True,
         ),
         yaxis=dict(
-            range=[-5, H + 18], visible=False, scaleratio=1,
+            range=[-8, H + 22], visible=False, scaleratio=1,
             scaleanchor="x", fixedrange=True,
         ),
-        height=130,
+        height=140,
         margin=dict(l=4, r=4, t=4, b=4),
         paper_bgcolor="white",
-        plot_bgcolor="#FAFBFC",
+        plot_bgcolor="white",
         showlegend=False,
     )
-    # Cab / Dock anchor labels via annotations
+    # FRONT / REAR labels at the top corners — primary direction cues
     fig.add_annotation(
-        x=0, y=-3, text="Cab", showarrow=False,
-        font=dict(size=9, color="#6B7280"), xanchor="left",
+        x=2, y=H + 10, text="⬅ FRONT", showarrow=False,
+        font=dict(size=11, color="#4338CA", family="sans-serif"),
+        xanchor="left", yanchor="bottom",
     )
     fig.add_annotation(
-        x=L, y=-3, text="Dock", showarrow=False,
-        font=dict(size=9, color="#B91C1C"), xanchor="right",
+        x=L - 2, y=H + 10, text="REAR 🚪", showarrow=False,
+        font=dict(size=11, color="#4338CA", family="sans-serif"),
+        xanchor="right", yanchor="bottom",
     )
+    # Down arrow centred over current-stage items — "여기 놓으세요"
+    if cur_xs:
+        cx = sum(cur_xs) / len(cur_xs)
+        fig.add_annotation(
+            x=cx, y=cur_top_y + 8,
+            text="↓",
+            showarrow=False,
+            font=dict(size=28, color="#D97706", family="sans-serif"),
+            xanchor="center", yanchor="bottom",
+        )
     return fig
 
 
@@ -1901,17 +1332,18 @@ def render_step2_v4(
     master: Dict[str, Dict[str, Any]],
     trucks_map: Dict[str, Dict[str, Any]],
     recommended_key: str,
+    all_loads_df: Optional[pd.DataFrame] = None,
 ) -> None:
-    """Step 2 — section-for-section mirror of PDF v4 layout:
+    """Step 2 v5 — loading-guide dashboard (HTML print, no PDF).
 
         Header (Load + Carrier + Driver + Left-anchor)
+        Print bar (Single / Selected / All) — HTML print, no ReportLab
         KPI 5 (Items / Length / Weight / Volume / Heavy on floor)
         Row A: 3D Isometric   |   Row B: Zone breakdown
         Row C: Dock Lineup (Wave 1 / Wave 2)
-        Row D: 5-Stage cards (1P/2P chip + units + layout + time + cum + safety)
-        Footer expander: Why this arrangement, Walk-through, Downloads, Email
+        Row D: ADAPTIVE N-stage cards (auto-fit + ghost system + ↓ arrow)
+        Footer: Why this arrangement, Downloads, Email
     """
-    from engine.pdf_gen_v4 import generate_work_order_v4
     from engine.zone_aggregator import (
         Stage,
         Zone,
@@ -1919,7 +1351,37 @@ def render_step2_v4(
         stages_from_zones,
     )
 
-    # ── Truck radio (screen-only — PDF is single-truck) ────────────────
+    # ── @media print CSS — Cmd+P clean printout ────────────────────────
+    # Hide sidebar, Streamlit chrome, file uploader, audit accordion etc.
+    # Force light backgrounds. Page-break-after on .print-page sections so
+    # bulk mode prints one work order per page.
+    st.markdown(
+        """
+        <style>
+        @media print {
+            [data-testid="stSidebar"],
+            [data-testid="stToolbar"],
+            [data-testid="stHeader"],
+            header, footer { display: none !important; }
+            .stApp { background: white !important; }
+            .main .block-container { padding: 0 !important; max-width: 100% !important; }
+            .print-page { page-break-after: always; break-after: page; }
+            .print-page:last-child { page-break-after: auto; break-after: auto; }
+            details, .stExpander { display: none !important; }
+            .no-print { display: none !important; }
+            @page { size: letter portrait; margin: 0.4in; }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Open print-page wrapper — closed at end of function. Each print-page
+    # gets its own A4/Letter page when printing (page-break-after: always).
+    st.markdown('<div class="print-page">', unsafe_allow_html=True)
+
+    # ── Truck radio (screen-only — fixed to recommended for print) ─────
+    st.markdown('<div class="no-print">', unsafe_allow_html=True)
     labels = {
         "26ft": (
             f"26ft Box Truck · Fits {sim_26['fitted_count']}/{sim_26['requested_count']}"
@@ -1940,6 +1402,7 @@ def render_step2_v4(
         key=f"truck_step2v4_{load_id}",
     )
     chosen_key = options_keys[[labels[k] for k in options_keys].index(chosen_label)]
+    st.markdown('</div>', unsafe_allow_html=True)  # /no-print
     sim = sim_26 if chosen_key == "26ft" else sim_53
     truck_spec = trucks_map[chosen_key]
     label = "26ft Box Truck" if chosen_key == "26ft" else "53ft Dry Van"
@@ -1947,9 +1410,10 @@ def render_step2_v4(
     placements = sim.get("placements", [])
     pair_count = sim.get("pair_count", 0)
 
-    # Build the zone / stage data exactly the same way the PDF does.
+    # Build zones + stages. We keep ALL stages (no [:5] cap) — Q3 CEO direction:
+    # stage count = unique broad_category count in this load. Adaptive grid below.
     zones = aggregate_zones(placements, master, pair_count=pair_count)
-    stages = stages_from_zones(zones)[:5]
+    stages = stages_from_zones(zones)
 
     # ── HEADER ─────────────────────────────────────────────────────────
     bol = load_id
@@ -1985,25 +1449,20 @@ def render_step2_v4(
             unsafe_allow_html=True,
         )
     with head_cols[1]:
-        # Generate the v4 PDF once for the hero button
-        try:
-            pdf_bytes = generate_work_order_v4(
-                sim, load_id=load_id, truck_label=label,
-                truck_spec=truck_spec, master=master,
-            )
-        except Exception as e:
-            pdf_bytes = None
-            st.error(f"PDF generation failed: {e}")
-        if pdf_bytes:
-            st.download_button(
-                "🖨 Print PDF work order",
-                pdf_bytes,
-                file_name=f"{load_id}_{chosen_key}_workorder.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-                key=f"pdf_v4_{load_id}_{chosen_key}",
-                type="primary",
-            )
+        # Print bar — single-load HTML print (Cmd+P / Ctrl+P). Bulk modes are
+        # rendered as a separate radio below the header so they don't get lost
+        # in the print button.
+        st.markdown(
+            '<div style="background:#EFF6FF;border:1.5px solid #1D4ED8;'
+            'border-radius:8px;padding:10px 14px;text-align:center;">'
+            '<div style="font-size:11px;color:#1E40AF;font-weight:700;'
+            'letter-spacing:0.5px;text-transform:uppercase;">Print work order</div>'
+            '<div style="font-size:13px;color:#1E3A8A;margin-top:4px;font-weight:600;">'
+            f'Press <b>Cmd+P</b> (Mac) / <b>Ctrl+P</b> (Windows)<br>'
+            f'or use Print mode below'
+            '</div></div>',
+            unsafe_allow_html=True,
+        )
 
     # Audit / category-leak chips (screen-only — useful for dispatcher)
     is_optimal = sim.get("is_provable_optimal", False)
@@ -2193,31 +1652,12 @@ def render_step2_v4(
             unsafe_allow_html=True,
         )
 
-    # ── Row D · 5-Stage cards ────────────────────────────────────────
-    st.markdown(
-        '<div style="font-size:11px;font-weight:700;color:#6B7280;'
-        'text-transform:uppercase;letter-spacing:0.5px;margin-top:14px;">'
-        'D · 5-Stage loading — side view (progressively filled)</div>',
-        unsafe_allow_html=True,
-    )
-    cat_colors_html = {
-        "refrigerator": "#85B7EB", "washer": "#ED93B1", "dryer": "#F4C0D1",
-        "washer_dryer_pair": "#E89BB0", "dishwasher": "#AFA9EC",
-        "microwave": "#FBBF24", "oven": "#F4A07A", "tv": "#60A5FA",
-        "monitor": "#22D3EE", "av": "#34D399", "ac": "#5EEAD4",
-        "other": "#D1D5DB",
-    }
-    safety_map = {
-        "refrigerator": "Strap to cab wall first. Hand-truck required.",
-        "washer": "Verify 4 transit bolts engaged.",
-        "dryer": "Align precisely on washer. 2-person lift.",
-        "dishwasher": "Hose side up. Prevent residual water leak.",
-        "microwave": "Protect glass-door corners. Light item.",
-        "oven": "Verify door lock. No items on glass-top.",
-        "tv": "Carton 'UP' arrows must face up. No horizontal stacking.",
-        "monitor": "Top-of-package impact-sensitive.",
-        "washer_dryer_pair": "Pair-mate items — load adjacent.",
-    }
+    # ── Row D · ADAPTIVE N-stage loading guide ─────────────────────────
+    # Q2 CEO direction: drop safety badges / crew chips / ETA — focus on
+    # "어디에 어떻게 놓는지" (where + how to place).
+    # Q3 CEO direction: stage count = unique broad_category in load.
+    n_total = len(stages)
+
     # Position-zone for "where to load" hint
     def _position_hint(stage) -> str:
         if not stage.zones:
@@ -2233,88 +1673,147 @@ def render_step2_v4(
             return ""
         avg_x = sum(p["x_in"] for p in zps) / len(zps)
         truck_len = truck_spec["length_in"]
-        zone_x = ("Front" if avg_x < truck_len * 0.33
-                  else "Middle" if avg_x < truck_len * 0.66
-                  else "Rear")
+        zone_x = ("FRONT" if avg_x < truck_len * 0.33
+                  else "MIDDLE" if avg_x < truck_len * 0.66
+                  else "REAR")
         avg_z = sum(p["z_in"] for p in zps) / len(zps)
-        tier = "Floor" if avg_z < 1 else f"Layer {int(avg_z / max(zps[0].get('dim_z_in', 1), 1)) + 1}"
+        tier = "FLOOR" if avg_z < 1 else f"LAYER {int(avg_z / max(zps[0].get('dim_z_in', 1), 1)) + 1}"
         return f"{zone_x} · {tier}"
 
-    total_units = sum(s.units for s in stages[:5])
+    # Pair sibling resolver — washer_dryer_pair across two stages.
+    def _pair_note(stage_idx: int) -> str:
+        s = stages[stage_idx]
+        broad = s.zones[0].broad_category if s.zones else "other"
+        title = _stage_title(s)
+        # washer + dryer adjacent stages
+        if broad == "washer":
+            nxt = stages[stage_idx + 1] if stage_idx + 1 < n_total else None
+            if nxt and nxt.zones and nxt.zones[0].broad_category == "dryer":
+                return "⛓ PAIRED — Dryer goes ON TOP next"
+        if broad == "dryer":
+            prv = stages[stage_idx - 1] if stage_idx > 0 else None
+            if prv and prv.zones and prv.zones[0].broad_category == "washer":
+                return f"⛓ PAIRED — ON TOP of Washer (step {prv.step_no})"
+        # explicit paired zone (single stage carries both)
+        if broad == "washer_dryer_pair":
+            return "⛓ PAIRED — Washer floor + Dryer on top"
+        return ""
+
+    st.markdown(
+        f'<div style="font-size:11px;font-weight:700;color:#6B7280;'
+        f'text-transform:uppercase;letter-spacing:0.5px;margin-top:14px;">'
+        f'D · LOADING SEQUENCE — {n_total} STAGE{"S" if n_total != 1 else ""}'
+        f' · Auto-adaptive grid</div>',
+        unsafe_allow_html=True,
+    )
+
+    total_units = sum(s.units for s in stages)
     cum_units = 0
 
-    n = min(5, len(stages))
-    stage_cols = st.columns(max(n, 1))
-    for i in range(n):
-        s = stages[i]
-        broad = s.zones[0].broad_category if s.zones else "other"
-        col = cat_colors_html.get(broad, "#D1D5DB")
-        crew_color = ("#FEF3C7", "#92400E") if s.crew == 2 else ("#ECFDF5", "#065F46")
-        title = _stage_title(s)
-        safety = safety_map.get(broad, "")
-        pos = _position_hint(s)
-        cum_units += s.units
-        progress_pct = int(cum_units / max(total_units, 1) * 100)
+    # Group into rows. Adaptive cap: 1 → 1 wide, 2 → 2 wide, 3 → 3, 4-5 → row of N,
+    # ≥6 → rows of 5, ≥10 → Wave headers added (split into 3 waves).
+    if n_total == 0:
+        st.info("No stages — return to Step 1.")
+        return
 
-        with stage_cols[i]:
-            # Header — step # + title + crew chip
+    def _row_size(n: int) -> int:
+        if n <= 5:
+            return n
+        return 5
+
+    use_waves = n_total >= 10
+    wave_boundaries: List[Tuple[str, int, int]] = []
+    if use_waves:
+        # 3 waves: front / middle / rear
+        wave_n = max(1, (n_total + 2) // 3)
+        wave_boundaries = [
+            ("Wave 1 — FRONT loading", 0, min(wave_n, n_total)),
+            ("Wave 2 — MIDDLE", wave_n, min(2 * wave_n, n_total)),
+            ("Wave 3 — REAR + TOP", 2 * wave_n, n_total),
+        ]
+        wave_boundaries = [w for w in wave_boundaries if w[2] > w[1]]
+    else:
+        wave_boundaries = [("", 0, n_total)]
+
+    row_size = _row_size(n_total)
+
+    for wave_label, wstart, wend in wave_boundaries:
+        if wave_label:
             st.markdown(
-                f'<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">'
-                f'<div style="background:{col};color:white;width:24px;height:24px;'
-                f'border-radius:50%;display:flex;align-items:center;justify-content:center;'
-                f'font-weight:800;font-size:12px;">{s.step_no}</div>'
-                f'<div style="flex:1;font-size:13px;font-weight:700;color:#111827;'
-                f'line-height:1.2;">{title}</div>'
-                f'<span style="background:{crew_color[0]};color:{crew_color[1]};padding:2px 8px;'
-                f'border-radius:3px;font-size:10px;font-weight:700;">{s.crew}P</span>'
-                f'</div>',
+                f'<div style="background:linear-gradient(90deg,#DBEAFE,white);'
+                f'padding:6px 12px;border-radius:6px;margin:10px 0 6px;'
+                f'font-size:12px;font-weight:700;color:#1D4ED8;">🚛 {wave_label}</div>',
                 unsafe_allow_html=True,
             )
-            # Mini side-view — truck + door track + per-item progressive fill
-            fig_mini = _build_stage_mini_view(sim, truck_spec, stages, i)
-            st.plotly_chart(
-                fig_mini, use_container_width=True,
-                config={"displayModeBar": False},
-                key=f"stage_mini_{load_id}_{chosen_key}_{i}",
-            )
-            # Action line — where to load (Front/Middle/Rear · Floor/Layer N)
-            if pos:
-                st.markdown(
-                    f'<div style="background:#EFF6FF;border:1px solid #BFDBFE;'
-                    f'border-radius:4px;padding:6px 8px;margin-bottom:6px;font-size:12px;'
-                    f'color:#1E40AF;font-weight:600;">'
-                    f'📍 Load to: <b>{pos}</b></div>',
-                    unsafe_allow_html=True,
-                )
-            # Stats
-            st.markdown(
-                f'<div style="font-size:11px;color:#374151;line-height:1.5;">'
-                f'<b>{s.units} units</b> · {s.unit_weight_lb} lb each<br>'
-                f'<span style="font-family:ui-monospace,SF Mono,monospace;font-size:10px;'
-                f'color:#6B7280;">{s.layout}</span><br>'
-                f'<span style="font-weight:700;color:#111827;">'
-                f'~{s.estimated_min} min · cum {s.cumulative_lift_lb_per_person:,} lb '
-                f'{s.crew}P</span>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-            # Progress bar — how full the truck is after this step
-            st.markdown(
-                f'<div style="margin-top:6px;">'
-                f'<div style="font-size:9px;color:#6B7280;display:flex;justify-content:space-between;">'
-                f'<span>After step {s.step_no}</span><span>{cum_units}/{total_units} units</span></div>'
-                f'<div style="background:#E5E7EB;height:4px;border-radius:2px;overflow:hidden;">'
-                f'<div style="background:{col};height:100%;width:{progress_pct}%;"></div></div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-            # Safety note
-            if safety:
-                st.markdown(
-                    f'<div style="font-size:10px;color:#991B1B;margin-top:6px;'
-                    f'font-weight:600;line-height:1.3;">! {safety}</div>',
-                    unsafe_allow_html=True,
-                )
+        for row_start in range(wstart, wend, row_size):
+            row_end = min(row_start + row_size, wend)
+            cols = st.columns(row_end - row_start)
+            for ci, i in enumerate(range(row_start, row_end)):
+                s = stages[i]
+                title = _stage_title(s)
+                pos = _position_hint(s)
+                pair_text = _pair_note(i)
+                cum_units += s.units
+                progress_pct = int(cum_units / max(total_units, 1) * 100)
+
+                with cols[ci]:
+                    # Step number circle + title + checkbox
+                    st.markdown(
+                        f'<div style="display:flex;align-items:flex-start;gap:8px;'
+                        f'margin-bottom:6px;">'
+                        f'<div style="background:#1D4ED8;color:white;width:30px;height:30px;'
+                        f'border-radius:50%;display:flex;align-items:center;justify-content:center;'
+                        f'font-weight:800;font-size:15px;flex-shrink:0;">{s.step_no}</div>'
+                        f'<div style="flex:1;">'
+                        f'<div style="font-size:14px;font-weight:700;color:#111827;'
+                        f'line-height:1.2;">{title}</div>'
+                        f'<div style="font-size:11px;color:#6B7280;margin-top:2px;">'
+                        f'{s.units} units · {s.unit_weight_lb * s.units:,} lb total</div>'
+                        f'</div>'
+                        f'<div style="width:24px;height:24px;border:2.5px solid #111827;'
+                        f'border-radius:4px;flex-shrink:0;" title="Check when done"></div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                    # Mini side-view — ghost + cur + ↓ arrow + FRONT/REAR labels
+                    fig_mini = _build_stage_mini_view(sim, truck_spec, stages, i)
+                    st.plotly_chart(
+                        fig_mini, use_container_width=True,
+                        config={"displayModeBar": False, "staticPlot": True},
+                        key=f"stage_mini_{load_id}_{chosen_key}_{i}",
+                    )
+                    # Position label
+                    if pos:
+                        st.markdown(
+                            f'<div style="background:#DBEAFE;color:#1D4ED8;'
+                            f'border-radius:6px;padding:6px 10px;margin-bottom:4px;'
+                            f'font-size:13px;font-weight:700;text-align:center;">'
+                            f'📍 {pos}</div>',
+                            unsafe_allow_html=True,
+                        )
+                    # Pair note (Washer/Dryer)
+                    if pair_text:
+                        st.markdown(
+                            f'<div style="background:#FEF3C7;border:1px solid #FCD34D;'
+                            f'color:#92400E;border-radius:4px;padding:4px 8px;'
+                            f'font-size:11px;font-weight:700;margin-bottom:4px;">'
+                            f'{pair_text}</div>',
+                            unsafe_allow_html=True,
+                        )
+                    # Progress bar
+                    st.markdown(
+                        f'<div style="margin-top:4px;">'
+                        f'<div style="font-size:9px;color:#6B7280;display:flex;'
+                        f'justify-content:space-between;">'
+                        f'<span>After step {s.step_no}</span>'
+                        f'<span>{cum_units}/{total_units} units</span></div>'
+                        f'<div style="background:#E5E7EB;height:5px;border-radius:3px;'
+                        f'overflow:hidden;">'
+                        f'<div style="background:linear-gradient(90deg,#10B981,#34D399);'
+                        f'height:100%;width:{progress_pct}%;"></div></div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
 
     # ── Footer expanders (Why / Walk-through / Downloads / Email) ────
     with st.expander("Why this arrangement", expanded=False):
@@ -2351,10 +1850,8 @@ def render_step2_v4(
             )
         try:
             from engine.email_ui import render_email_panel
-            # Persist generated artefacts so render_email_panel can attach them
-            if pdf_bytes:
-                pdf_path = OUT_DIR / f"{load_id}_{chosen_key}_workorder.pdf"
-                pdf_path.write_bytes(pdf_bytes)
+            # Persist Excel + interactive HTML so render_email_panel can attach
+            # them. PDF generation removed (Q1 CEO direction — HTML print only).
             excel_path = OUT_DIR / f"{load_id}_{chosen_key}_load_report.xlsx"
             excel_path.write_bytes(excel_bytes)
             html_path = OUT_DIR / f"{load_id}_{chosen_key}_3d.html"
@@ -2362,6 +1859,9 @@ def render_step2_v4(
             render_email_panel(load_id, chosen_key, sim, OUT_DIR)
         except Exception:
             pass
+
+    # Close print-page wrapper
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 # =========================================================================
@@ -2412,27 +1912,31 @@ def sidebar_load_picker() -> Optional[Tuple[str, pd.DataFrame, Optional[str]]]:
         "Only **3 columns** needed: `load_id`, `model_code`, `quantity`. "
         "Dimensions/weight are auto-pulled from Model_Master via `model_code`."
     )
+
+    # Persisted upload state survives page navigation. Streamlit clears widget
+    # state when the widget isn't rendered (sidebar_load_picker only runs on the
+    # Load Plan page), so we copy parsed Loads into stable session_state keys
+    # (df_loads_uploaded, df_loads_uploaded_name) on each upload.
     uploaded = st.sidebar.file_uploader(
         "Upload Loads Excel", type=["xlsx"], key="loads_uploader",
         help="Required: load_id, model_code, quantity. "
-             "Do NOT include width/depth/height/weight — those come from Model_Master.",
+             "Persists across page navigation until you click Clear.",
     )
-    use_sample = st.sidebar.checkbox("Use sample data", value=not uploaded)
 
-    df_loads: Optional[pd.DataFrame] = None
-    if uploaded:
+    if uploaded is not None:
         try:
             xls = pd.ExcelFile(uploaded)
             sheets = xls.sheet_names
         except Exception as exc:  # noqa: BLE001
             st.sidebar.error(f"Cannot read Excel: {exc}")
             return None
-        # Auto-pick "Loads" if present, otherwise let user choose
+
         def _default_idx(target: str, options: List[str]) -> int:
             for i, name in enumerate(options):
                 if name.strip().lower() == target.lower():
                     return i
             return 0
+
         chosen_sheet = st.sidebar.selectbox(
             "Loads sheet", sheets,
             index=_default_idx("Loads", sheets), key="loads_sheet_pick",
@@ -2443,13 +1947,31 @@ def sidebar_load_picker() -> Optional[Tuple[str, pd.DataFrame, Optional[str]]]:
             st.sidebar.error(f"Sheet read failed: {exc}")
             return None
         try:
-            df_loads, lwarns = normalize_loads_df(raw_loads)
+            df_loads_new, lwarns = normalize_loads_df(raw_loads)
         except ValueError as exc:
             st.sidebar.error(f"⚠ {exc}")
             return None
+        st.session_state.df_loads_uploaded = df_loads_new
+        st.session_state.df_loads_uploaded_name = uploaded.name
         for w in lwarns:
             st.sidebar.info(f"ℹ {w}")
-    elif use_sample:
+
+    has_upload = st.session_state.get("df_loads_uploaded") is not None
+    if has_upload:
+        name = st.session_state.get("df_loads_uploaded_name", "uploaded file")
+        n_rows = len(st.session_state.df_loads_uploaded)
+        n_loads = st.session_state.df_loads_uploaded["load_id"].nunique()
+        st.sidebar.success(
+            f"📎 Using **{name}**  \n"
+            f"{n_loads} load(s) · {n_rows} row(s) · persisted across pages"
+        )
+        if st.sidebar.button("🗑 Clear uploaded · use sample", key="loads_clear_btn"):
+            st.session_state.pop("df_loads_uploaded", None)
+            st.session_state.pop("df_loads_uploaded_name", None)
+            st.rerun()
+        df_loads = st.session_state.df_loads_uploaded
+    else:
+        st.sidebar.caption("ℹ No upload yet — using bundled sample data.")
         df_loads = st.session_state.df_loads
 
     if df_loads is None or df_loads.empty:
@@ -2457,7 +1979,7 @@ def sidebar_load_picker() -> Optional[Tuple[str, pd.DataFrame, Optional[str]]]:
         return None
 
     load_ids = sorted(df_loads["load_id"].unique().tolist())
-    chosen = st.sidebar.selectbox("Load", load_ids, index=0)
+    chosen = st.sidebar.selectbox("Load", load_ids, index=0, key="load_id_pick")
     grp = df_loads[df_loads["load_id"] == chosen]
     destination = grp["destination"].iloc[0] if "destination" in grp.columns else None
     return chosen, grp, destination
@@ -2525,6 +2047,16 @@ if page == "📦 Load Plan":
     for tt, spec in trucks_map.items():
         spec["truck_type"] = tt
 
+    # Get the active Loads DataFrame so we can offer bulk print across loads.
+    active_loads_df: Optional[pd.DataFrame] = st.session_state.get(
+        "df_loads_uploaded", st.session_state.df_loads,
+    )
+    all_load_ids: List[str] = (
+        sorted(active_loads_df["load_id"].unique().tolist())
+        if active_loads_df is not None and not active_loads_df.empty
+        else [load_id]
+    )
+
     load_lines = grp[["model_code", "quantity"]].to_dict("records")
 
     # Validate model codes against current master before simulating
@@ -2543,7 +2075,7 @@ if page == "📦 Load Plan":
             f"Either:\n"
             f"- Upload a **Loads** file in the sidebar with SKUs that exist in your master, or\n"
             f"- Add the missing SKUs to your Model_Master (Model Master page → re-upload), or\n"
-            f"- Click *Use sample data* OFF and upload your own Loads."
+            f"- Click 🗑 Clear uploaded in the sidebar to go back to bundled sample."
         )
         with st.expander("Sample of available SKUs in your master"):
             sample = list(master.keys())[:30]
@@ -2631,19 +2163,21 @@ if page == "📦 Load Plan":
         )
         return hash(bits)
 
-    sig = (
-        load_id,
-        tuple(sorted((l["model_code"], l["quantity"]) for l in load_lines)),
-        _master_fingerprint(master),
-        _trucks_fingerprint(trucks_map),
-    )
-    cache_key = f"sim_{sig}"
-    if cache_key not in st.session_state:
-        sim_26 = router_solve(load_lines, master, trucks_map["26ft"], time_budget_s=15.0)
-        sim_53 = router_solve(load_lines, master, trucks_map["53ft"], time_budget_s=15.0)
-        st.session_state[cache_key] = (sim_26, sim_53)
-    sim_26, sim_53 = st.session_state[cache_key]
+    def _solve_with_cache(lid: str, lines: List[Dict[str, Any]]):
+        sig = (
+            lid,
+            tuple(sorted((l["model_code"], l["quantity"]) for l in lines)),
+            _master_fingerprint(master),
+            _trucks_fingerprint(trucks_map),
+        )
+        ck = f"sim_{sig}"
+        if ck not in st.session_state:
+            s26 = router_solve(lines, master, trucks_map["26ft"], time_budget_s=15.0)
+            s53 = router_solve(lines, master, trucks_map["53ft"], time_budget_s=15.0)
+            st.session_state[ck] = (s26, s53)
+        return st.session_state[ck]
 
+    sim_26, sim_53 = _solve_with_cache(load_id, load_lines)
     recommended_key = pick_recommended(sim_26, sim_53) or "26ft"
 
     tab1, tab2 = st.tabs([
@@ -2653,7 +2187,96 @@ if page == "📦 Load Plan":
     with tab1:
         render_step1(load_id, load_lines, master, trucks_map, sim_26, sim_53, destination)
     with tab2:
-        render_step2_v4(load_id, sim_26, sim_53, master, trucks_map, recommended_key)
+        # ── Print mode control bar — Single / Selected / All ──────────
+        # Single (default): render only the current load_id from the sidebar.
+        # Selected: user picks N load_ids via multiselect, each gets a page.
+        # All: every load_id in the active Loads file gets a page.
+        st.markdown('<div class="no-print">', unsafe_allow_html=True)
+        col_a, col_b = st.columns([2, 3])
+        with col_a:
+            print_mode = st.radio(
+                "🖨 Print mode",
+                ["Single load", "Selected loads", "All loads"],
+                index=0, horizontal=True, key="print_mode_radio",
+                help=(
+                    "Single: only the load picked in the sidebar.\n"
+                    "Selected: choose N loads to bundle.\n"
+                    "All: every load in the active Loads file (Cover page + N pages)."
+                ),
+            )
+        selected_ids: List[str] = [load_id]
+        if print_mode == "Selected loads":
+            with col_b:
+                default_sel = st.session_state.get("print_selected_ids", [load_id])
+                default_sel = [x for x in default_sel if x in all_load_ids] or [load_id]
+                selected_ids = st.multiselect(
+                    "Loads to include",
+                    options=all_load_ids,
+                    default=default_sel,
+                    key="print_selected_ids",
+                )
+                if not selected_ids:
+                    selected_ids = [load_id]
+        elif print_mode == "All loads":
+            selected_ids = all_load_ids
+            with col_b:
+                st.info(
+                    f"Will render **{len(selected_ids)} loads** "
+                    f"(Cover + {len(selected_ids)} pages). "
+                    f"Hit Cmd+P / Ctrl+P → Save as PDF."
+                )
+        st.caption(
+            "💡 To print: hit **Cmd+P** (Mac) or **Ctrl+P** (Windows). "
+            "Sidebar/buttons are hidden in the printout."
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # ── Render single or bulk ─────────────────────────────────────
+        if print_mode == "Single load" or len(selected_ids) <= 1:
+            render_step2_v4(load_id, sim_26, sim_53, master, trucks_map, recommended_key)
+        else:
+            # Cover page first (only meaningful in bulk)
+            if print_mode == "All loads":
+                st.markdown(
+                    f'<div class="print-page" style="padding:24px;border:1px solid #E5E7EB;'
+                    f'border-radius:10px;margin-bottom:16px;">'
+                    f'<div style="font-size:24px;font-weight:800;color:#111827;'
+                    f'border-bottom:3px solid #111827;padding-bottom:8px;">'
+                    f'📋 Loads Cover · Daily Print Bundle</div>'
+                    f'<div style="font-size:14px;color:#374151;margin-top:8px;">'
+                    f'<b>{len(selected_ids)} loads</b> · '
+                    f'<b>{sum(len(active_loads_df[active_loads_df["load_id"]==lid]) for lid in selected_ids)}</b> rows'
+                    f'</div>'
+                    f'<ol style="font-size:13px;color:#374151;margin-top:12px;">'
+                    + "".join(
+                        f'<li>☐ <b>{lid}</b> — {active_loads_df[active_loads_df["load_id"]==lid]["quantity"].sum()} units</li>'
+                        for lid in selected_ids
+                    )
+                    + '</ol></div>',
+                    unsafe_allow_html=True,
+                )
+            # Per-load pages with progress bar
+            prog = st.progress(0.0, text=f"Building {len(selected_ids)} work orders…")
+            for i, lid in enumerate(selected_ids):
+                lid_grp = active_loads_df[active_loads_df["load_id"] == lid]
+                lid_lines = lid_grp[["model_code", "quantity"]].to_dict("records")
+                lid_skus = {l["model_code"] for l in lid_lines}
+                missing = lid_skus - set(master.keys())
+                if missing:
+                    st.warning(
+                        f"⏭ Skipping {lid} — {len(missing)} SKU(s) missing in master"
+                    )
+                    prog.progress((i + 1) / len(selected_ids))
+                    continue
+                lid_sim_26, lid_sim_53 = _solve_with_cache(lid, lid_lines)
+                lid_recommended = pick_recommended(lid_sim_26, lid_sim_53) or "26ft"
+                render_step2_v4(
+                    lid, lid_sim_26, lid_sim_53, master, trucks_map,
+                    lid_recommended, all_loads_df=active_loads_df,
+                )
+                prog.progress((i + 1) / len(selected_ids),
+                              text=f"Built {i+1}/{len(selected_ids)} · {lid}")
+            prog.empty()
 
 
 # =========================================================================

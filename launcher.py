@@ -50,7 +50,7 @@ def _self_diagnostic() -> None:
     expected = [
         "engine.categorizer", "engine.best_packer", "engine.router",
         "engine.milp_solver", "engine.sa_refiner", "engine.zone_aggregator",
-        "engine.pdf_gen_v4", "engine.demote_layer",
+        "engine.demote_layer",
     ]
     missing = []
     for mod in expected:

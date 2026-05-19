@@ -66,20 +66,28 @@ jobs:
             <p>안녕하세요,</p>
             <p>LG Load Optimizer Windows .exe 새 빌드가 준비됐습니다.</p>
 
-            <p><b>다운로드:</b><br>
+            <p><b>다운로드 (로그인 불필요 — 공개 repo):</b><br>
             <a href="https://github.com/${{ github.repository }}/releases/download/build-${{ github.run_number }}/LG_Load_Optimizer.exe">
               https://github.com/${{ github.repository }}/releases/download/build-${{ github.run_number }}/LG_Load_Optimizer.exe
             </a></p>
 
-            <p>(GitHub 로그인 필요 — private repo)</p>
-
             <h3>사용법</h3>
             <ol>
-              <li>위 링크에서 .exe 다운로드 (LG 사내망에서 GitHub 로그인 후 클릭)</li>
-              <li>Windows PC에서 더블클릭</li>
+              <li>위 링크 클릭 → .exe 다운로드</li>
+              <li>Windows PC에서 더블클릭 → 콘솔 창에 self-diagnostic 표시</li>
               <li>10~30초 cold start 대기 — 브라우저가 localhost:8501 자동 오픈</li>
               <li>SmartScreen 경고 시: <em>More info</em> → <em>Run anyway</em></li>
+              <li>인쇄: 대시보드에서 <b>Cmd+P</b> (Mac) / <b>Ctrl+P</b> (Win) → "PDF로 저장" 또는 프린터로 출력</li>
+              <li>벌크 인쇄: Step 2 탭 위 "Print mode" 라디오에서 <em>All loads</em> 선택 → Cmd+P</li>
             </ol>
+
+            <h3>변경 사항 (build #${{ github.run_number }})</h3>
+            <ul>
+              <li>📎 사이드바 Loads 업로드 영속성 fix — 페이지 이동 후에도 유지</li>
+              <li>🎨 5-stage 카드 → N-stage 적응형 (카테고리 개수에 따라 자동)</li>
+              <li>🖨 PDF 폐기 → HTML 인쇄 (Cmd+P · Plotly 3D 그대로) + 벌크 모드</li>
+              <li>📦 .exe 크기 ~4MB 감소 (ReportLab 제거)</li>
+            </ul>
 
             <p>Commit: <code>${{ github.sha }}</code></p>
             <p>Build #: ${{ github.run_number }}</p>
