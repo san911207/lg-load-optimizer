@@ -1189,45 +1189,31 @@ def build_simple_excel(
 # render_step2 is kept above for emergency rollback.
 
 
-def _build_stage_mini_view(
-    sim: Dict[str, Any],
+def _build_row_mini_view(
     truck_spec: Dict[str, Any],
-    stages_so_far: list,
-    current_stage_idx: int,
+    rows_so_far: list,
+    current_row_idx: int,
 ) -> "go.Figure":
-    """Side-view loading-guide card body.
+    """Side-view card body — one card = one physical row (Q4 CEO direction).
 
-    Visual language (Q2 CEO direction — loading guide, not safety):
-      • Truck silhouette in light grey
-      • Previously-loaded items: light-grey ghost (context)
-      • Current-stage items: bright blue (where to load NOW)
-      • Down arrow ↓ over current-stage centroid (precise placement cue)
-      • "⬅ FRONT" / "REAR 🚪" labels stamped at the top corners
-      • Door-track wash retained — workers still need to clear it
-
-    Safety colour/badge layer is intentionally removed at the caller level
-    per CEO direction; this view is pure positional guidance.
+    Rows BEFORE current: light-grey ghost (already loaded).
+    Current row:           bright blue + ↓ arrow centred over the column.
+    Future rows:           not drawn (keeps focus on the next action).
     """
     import plotly.graph_objects as go
     L = float(truck_spec["length_in"])
     H = float(truck_spec["height_in"])
     DT_LEN = 60.0
     DT_LOSS = 10.0
-
-    placements = sim.get("placements", [])
-    CUR_FILL = "#1D4ED8"
-    CUR_EDGE = "#1E40AF"
-    GHOST_FILL = "#E2E8F0"
-    GHOST_EDGE = "#CBD5E1"
+    CUR_FILL = "#1D4ED8"; CUR_EDGE = "#1E40AF"
+    GHOST_FILL = "#E2E8F0"; GHOST_EDGE = "#CBD5E1"
 
     shapes = []
-    # Truck silhouette (light grey wall)
     shapes.append(dict(
         type="rect", x0=0, y0=0, x1=L, y1=H,
         line=dict(color="#94A3B8", width=2),
         fillcolor="#F8FAFC", layer="below",
     ))
-    # Door-track zone (faded red)
     shapes.append(dict(
         type="rect",
         x0=L - DT_LEN, y0=H - DT_LOSS, x1=L, y1=H,
@@ -1235,23 +1221,14 @@ def _build_stage_mini_view(
         fillcolor="rgba(220,38,38,0.18)", layer="below",
     ))
 
-    # Cumulative items: ghost for prior stages, bright blue for current
-    cumulative_seqs: set = set()
-    cur_xs: list = []   # to compute arrow centroid
+    cur_xs: list = []
     cur_top_y: float = 0.0
-    for stg_idx, stg in enumerate(stages_so_far[: current_stage_idx + 1]):
-        stg_seqs: set = set()
-        for zn in stg.zones:
-            stg_seqs |= set(zn.item_seqs)
-        new_seqs = stg_seqs - cumulative_seqs
-        cumulative_seqs |= stg_seqs
-        is_current = (stg_idx == current_stage_idx)
+    for r_idx, row in enumerate(rows_so_far[: current_row_idx + 1]):
+        is_current = (r_idx == current_row_idx)
         fill = CUR_FILL if is_current else GHOST_FILL
         line_col = CUR_EDGE if is_current else GHOST_EDGE
         line_w = 1.6 if is_current else 0.7
-        for p in placements:
-            if p.get("seq") not in new_seqs:
-                continue
+        for p in row.placements:
             x0 = p["x_in"]; x1 = x0 + p["dim_x_in"]
             y0 = p["z_in"]; y1 = y0 + p["dim_z_in"]
             shapes.append(dict(
@@ -1267,21 +1244,13 @@ def _build_stage_mini_view(
     fig = go.Figure()
     fig.update_layout(
         shapes=shapes,
-        xaxis=dict(
-            range=[-5, L + 5], visible=False, scaleanchor=None,
-            fixedrange=True,
-        ),
-        yaxis=dict(
-            range=[-8, H + 22], visible=False, scaleratio=1,
-            scaleanchor="x", fixedrange=True,
-        ),
+        xaxis=dict(range=[-5, L + 5], visible=False, fixedrange=True),
+        yaxis=dict(range=[-8, H + 22], visible=False, scaleratio=1,
+                   scaleanchor="x", fixedrange=True),
         height=140,
         margin=dict(l=4, r=4, t=4, b=4),
-        paper_bgcolor="white",
-        plot_bgcolor="white",
-        showlegend=False,
+        paper_bgcolor="white", plot_bgcolor="white", showlegend=False,
     )
-    # FRONT / REAR labels at the top corners — primary direction cues
     fig.add_annotation(
         x=2, y=H + 10, text="⬅ FRONT", showarrow=False,
         font=dict(size=11, color="#4338CA", family="sans-serif"),
@@ -1292,13 +1261,11 @@ def _build_stage_mini_view(
         font=dict(size=11, color="#4338CA", family="sans-serif"),
         xanchor="right", yanchor="bottom",
     )
-    # Down arrow centred over current-stage items — "여기 놓으세요"
     if cur_xs:
         cx = sum(cur_xs) / len(cur_xs)
         fig.add_annotation(
             x=cx, y=cur_top_y + 8,
-            text="↓",
-            showarrow=False,
+            text="↓", showarrow=False,
             font=dict(size=28, color="#D97706", family="sans-serif"),
             xanchor="center", yanchor="bottom",
         )
@@ -1348,6 +1315,8 @@ def render_step2_v4(
         Stage,
         Zone,
         aggregate_zones,
+        aggregate_rows,
+        row_summary,
         stages_from_zones,
     )
 
@@ -1410,10 +1379,13 @@ def render_step2_v4(
     placements = sim.get("placements", [])
     pair_count = sim.get("pair_count", 0)
 
-    # Build zones + stages. We keep ALL stages (no [:5] cap) — Q3 CEO direction:
-    # stage count = unique broad_category count in this load. Adaptive grid below.
+    # Build zones (for the dispatcher Zone breakdown table) + rows (for the
+    # forklift operator's row-by-row loading sequence). Stages_from_zones is
+    # no longer wired into Row D — kept available for legacy callers.
+    # Q4 CEO direction: load order MUST go front-to-rear row by row.
     zones = aggregate_zones(placements, master, pair_count=pair_count)
-    stages = stages_from_zones(zones)
+    rows_seq = aggregate_rows(placements, master)
+    stages = stages_from_zones(zones)  # kept for any downstream caller
 
     # ── HEADER ─────────────────────────────────────────────────────────
     bol = load_id
@@ -1652,84 +1624,72 @@ def render_step2_v4(
             unsafe_allow_html=True,
         )
 
-    # ── Row D · ADAPTIVE N-stage loading guide ─────────────────────────
-    # Q2 CEO direction: drop safety badges / crew chips / ETA — focus on
-    # "어디에 어떻게 놓는지" (where + how to place).
-    # Q3 CEO direction: stage count = unique broad_category in load.
-    n_total = len(stages)
+    # ── Row D · ROW-BY-ROW LOADING SEQUENCE (Q4 CEO direction) ─────────
+    # 한 카드 = 한 물리 row (x_in column). 앞에서 뒤로 sequential.
+    # Mixed-category row 명확히 표시 (e.g. "Row 3: 2 Dryer + 1 Fridge + 2 Washer").
+    # Safety badges, crew chip, ETA 모두 제거 (Q2).
+    n_total = len(rows_seq)
+    truck_len_in = float(truck_spec["length_in"])
 
-    # Position-zone for "where to load" hint
-    def _position_hint(stage) -> str:
-        if not stage.zones:
-            return ""
-        zps = []
-        seqs = set()
-        for zn in stage.zones:
-            seqs |= set(zn.item_seqs)
-        for p in placements:
-            if p.get("seq") in seqs:
-                zps.append(p)
-        if not zps:
-            return ""
-        avg_x = sum(p["x_in"] for p in zps) / len(zps)
-        truck_len = truck_spec["length_in"]
-        zone_x = ("FRONT" if avg_x < truck_len * 0.33
-                  else "MIDDLE" if avg_x < truck_len * 0.66
+    def _row_position_hint(row) -> str:
+        """FRONT / MIDDLE / REAR · LAYER N — based on this row's x and z."""
+        avg_x = (row.x_in + row.x_end_in) / 2.0
+        zone_x = ("FRONT" if avg_x < truck_len_in * 0.33
+                  else "MIDDLE" if avg_x < truck_len_in * 0.66
                   else "REAR")
-        avg_z = sum(p["z_in"] for p in zps) / len(zps)
-        tier = "FLOOR" if avg_z < 1 else f"LAYER {int(avg_z / max(zps[0].get('dim_z_in', 1), 1)) + 1}"
-        return f"{zone_x} · {tier}"
+        stack = " · STACKED" if row.has_stack else ""
+        return f"{zone_x} · {row.x_ft:.1f} ft{stack}"
 
-    # Pair sibling resolver — washer_dryer_pair across two stages.
-    def _pair_note(stage_idx: int) -> str:
-        s = stages[stage_idx]
-        broad = s.zones[0].broad_category if s.zones else "other"
-        title = _stage_title(s)
-        # washer + dryer adjacent stages
-        if broad == "washer":
-            nxt = stages[stage_idx + 1] if stage_idx + 1 < n_total else None
-            if nxt and nxt.zones and nxt.zones[0].broad_category == "dryer":
-                return "⛓ PAIRED — Dryer goes ON TOP next"
-        if broad == "dryer":
-            prv = stages[stage_idx - 1] if stage_idx > 0 else None
-            if prv and prv.zones and prv.zones[0].broad_category == "washer":
-                return f"⛓ PAIRED — ON TOP of Washer (step {prv.step_no})"
-        # explicit paired zone (single stage carries both)
-        if broad == "washer_dryer_pair":
-            return "⛓ PAIRED — Washer floor + Dryer on top"
+    def _row_pair_note(row, idx: int) -> str:
+        """Identify stacked-pair situations within a row."""
+        cats = row.categories
+        if "washer" in cats and "dryer" in cats:
+            return f"⛓ Washer ({cats['washer']}) on floor, Dryer ({cats['dryer']}) ON TOP"
+        if row.has_stack and "dryer" in cats and idx > 0:
+            prv = rows_seq[idx - 1]
+            if "washer" in prv.categories:
+                return f"⛓ Dryer ON TOP of Row {prv.row_no} Washers"
         return ""
 
     st.markdown(
         f'<div style="font-size:11px;font-weight:700;color:#6B7280;'
         f'text-transform:uppercase;letter-spacing:0.5px;margin-top:14px;">'
-        f'D · LOADING SEQUENCE — {n_total} STAGE{"S" if n_total != 1 else ""}'
-        f' · Auto-adaptive grid</div>',
+        f'D · LOADING SEQUENCE — {n_total} ROW{"S" if n_total != 1 else ""}'
+        f' · front → rear · physical load order</div>',
         unsafe_allow_html=True,
     )
 
-    total_units = sum(s.units for s in stages)
-    cum_units = 0
-
-    # Group into rows. Adaptive cap: 1 → 1 wide, 2 → 2 wide, 3 → 3, 4-5 → row of N,
-    # ≥6 → rows of 5, ≥10 → Wave headers added (split into 3 waves).
     if n_total == 0:
-        st.info("No stages — return to Step 1.")
+        st.info("No rows — return to Step 1.")
         return
 
+    total_units = sum(r.units for r in rows_seq)
+    cum_units = 0
+
+    # Grid sizing — N=1 single full, N=2-5 row of N, N=6+ wrap 5 per row,
+    # N≥10 Wave headers (3 waves Front/Middle/Rear from x_in distribution).
     def _row_size(n: int) -> int:
-        if n <= 5:
-            return n
-        return 5
+        return n if n <= 5 else 5
 
     use_waves = n_total >= 10
     wave_boundaries: List[Tuple[str, int, int]] = []
     if use_waves:
-        # 3 waves: front / middle / rear
-        wave_n = max(1, (n_total + 2) // 3)
+        # Split by physical x position into thirds (not by count, since rows
+        # are uneven). Front = first 33% of truck length, etc.
+        front_end = 0
+        mid_end = 0
+        for i, r in enumerate(rows_seq):
+            cx = (r.x_in + r.x_end_in) / 2
+            if cx < truck_len_in * 0.33:
+                front_end = i + 1
+            if cx < truck_len_in * 0.66:
+                mid_end = i + 1
+        front_end = max(1, front_end)
+        mid_end = max(front_end, mid_end)
         wave_boundaries = [
-            ("Wave 1 — FRONT loading", 0, min(wave_n, n_total)),
-            ("Wave 2 — MIDDLE", wave_n, min(2 * wave_n, n_total)),
-            ("Wave 3 — REAR + TOP", 2 * wave_n, n_total),
+            ("Wave 1 — FRONT (first ~⅓ of truck)", 0, front_end),
+            ("Wave 2 — MIDDLE", front_end, mid_end),
+            ("Wave 3 — REAR (final ⅓, includes door zone)", mid_end, n_total),
         ]
         wave_boundaries = [w for w in wave_boundaries if w[2] > w[1]]
     else:
@@ -1745,67 +1705,77 @@ def render_step2_v4(
                 f'font-size:12px;font-weight:700;color:#1D4ED8;">🚛 {wave_label}</div>',
                 unsafe_allow_html=True,
             )
-        for row_start in range(wstart, wend, row_size):
-            row_end = min(row_start + row_size, wend)
-            cols = st.columns(row_end - row_start)
-            for ci, i in enumerate(range(row_start, row_end)):
-                s = stages[i]
-                title = _stage_title(s)
-                pos = _position_hint(s)
-                pair_text = _pair_note(i)
-                cum_units += s.units
+        for grid_start in range(wstart, wend, row_size):
+            grid_end = min(grid_start + row_size, wend)
+            cols = st.columns(grid_end - grid_start)
+            for ci, i in enumerate(range(grid_start, grid_end)):
+                r = rows_seq[i]
+                pos = _row_position_hint(r)
+                pair_text = _row_pair_note(r, i)
+                summary = row_summary(r)
+                cum_units += r.units
                 progress_pct = int(cum_units / max(total_units, 1) * 100)
+                title = f"Row {r.row_no}"
+                if r.is_mixed:
+                    title += " · MIXED"
+                mixed_badge = (
+                    '<span style="background:#FEF3C7;color:#92400E;'
+                    'padding:1px 6px;border-radius:3px;font-size:9px;'
+                    'font-weight:700;margin-left:4px;">MIXED</span>'
+                ) if r.is_mixed else ''
 
                 with cols[ci]:
-                    # Step number circle + title + checkbox
                     st.markdown(
                         f'<div style="display:flex;align-items:flex-start;gap:8px;'
                         f'margin-bottom:6px;">'
                         f'<div style="background:#1D4ED8;color:white;width:30px;height:30px;'
                         f'border-radius:50%;display:flex;align-items:center;justify-content:center;'
-                        f'font-weight:800;font-size:15px;flex-shrink:0;">{s.step_no}</div>'
+                        f'font-weight:800;font-size:14px;flex-shrink:0;">{r.row_no}</div>'
                         f'<div style="flex:1;">'
                         f'<div style="font-size:14px;font-weight:700;color:#111827;'
-                        f'line-height:1.2;">{title}</div>'
+                        f'line-height:1.2;">Row {r.row_no}{mixed_badge}</div>'
                         f'<div style="font-size:11px;color:#6B7280;margin-top:2px;">'
-                        f'{s.units} units · {s.unit_weight_lb * s.units:,} lb total</div>'
+                        f'<b>{r.units}</b> units · <b>{int(r.total_weight_lb):,}</b> lb</div>'
                         f'</div>'
                         f'<div style="width:24px;height:24px;border:2.5px solid #111827;'
-                        f'border-radius:4px;flex-shrink:0;" title="Check when done"></div>'
+                        f'border-radius:4px;flex-shrink:0;" title="Check when row loaded"></div>'
                         f'</div>',
                         unsafe_allow_html=True,
                     )
-                    # Mini side-view — ghost + cur + ↓ arrow + FRONT/REAR labels
-                    fig_mini = _build_stage_mini_view(sim, truck_spec, stages, i)
+                    fig_mini = _build_row_mini_view(truck_spec, rows_seq, i)
                     st.plotly_chart(
                         fig_mini, use_container_width=True,
                         config={"displayModeBar": False, "staticPlot": True},
-                        key=f"stage_mini_{load_id}_{chosen_key}_{i}",
+                        key=f"row_mini_{load_id}_{chosen_key}_{i}",
+                    )
+                    # Item summary (mixed vs uniform)
+                    st.markdown(
+                        f'<div style="font-size:12px;font-weight:700;color:#111827;'
+                        f'background:#F8FAFC;border:1px solid #E2E8F0;border-radius:4px;'
+                        f'padding:5px 8px;margin-bottom:4px;">📦 {summary}</div>',
+                        unsafe_allow_html=True,
                     )
                     # Position label
-                    if pos:
-                        st.markdown(
-                            f'<div style="background:#DBEAFE;color:#1D4ED8;'
-                            f'border-radius:6px;padding:6px 10px;margin-bottom:4px;'
-                            f'font-size:13px;font-weight:700;text-align:center;">'
-                            f'📍 {pos}</div>',
-                            unsafe_allow_html=True,
-                        )
-                    # Pair note (Washer/Dryer)
+                    st.markdown(
+                        f'<div style="background:#DBEAFE;color:#1D4ED8;'
+                        f'border-radius:6px;padding:5px 9px;margin-bottom:4px;'
+                        f'font-size:12px;font-weight:700;text-align:center;">'
+                        f'📍 {pos}</div>',
+                        unsafe_allow_html=True,
+                    )
                     if pair_text:
                         st.markdown(
                             f'<div style="background:#FEF3C7;border:1px solid #FCD34D;'
                             f'color:#92400E;border-radius:4px;padding:4px 8px;'
-                            f'font-size:11px;font-weight:700;margin-bottom:4px;">'
+                            f'font-size:10.5px;font-weight:700;margin-bottom:4px;">'
                             f'{pair_text}</div>',
                             unsafe_allow_html=True,
                         )
-                    # Progress bar
                     st.markdown(
                         f'<div style="margin-top:4px;">'
                         f'<div style="font-size:9px;color:#6B7280;display:flex;'
                         f'justify-content:space-between;">'
-                        f'<span>After step {s.step_no}</span>'
+                        f'<span>After Row {r.row_no}</span>'
                         f'<span>{cum_units}/{total_units} units</span></div>'
                         f'<div style="background:#E5E7EB;height:5px;border-radius:3px;'
                         f'overflow:hidden;">'

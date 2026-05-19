@@ -319,3 +319,138 @@ def stages_from_zones(zones: List[Zone]) -> List[Stage]:
             step += 1
 
     return stages
+
+
+# =============================================================================
+# Row-based loading sequence (2026-05-19 — CEO Q4 direction)
+# =============================================================================
+# Stages above group by broad_category — useful for the dispatcher who needs
+# to know "what got loaded where" but not faithful to the physical loading
+# order a forklift operator must follow. A forklift can't drive past row 5 to
+# place row 3, so the actual loading order is FRONT-to-REAR row-by-row.
+#
+# aggregate_rows() groups placements by their x_in column position, sorts
+# front-to-rear, and emits one Row per distinct column. A row may be
+# single-category (12 Microwaves stacked at the front wall) or mixed
+# (2 Dryer + 1 Refrigerator + 2 Washer all at x=4.7 ft).
+# =============================================================================
+
+
+@dataclass
+class LoadRow:
+    """One physical row in the truck — placements sharing the same x_in column.
+
+    The dispatcher reads stages_from_zones() for the section-level summary;
+    the forklift operator reads aggregate_rows() for the literal load order.
+    """
+    row_no: int                          # 1-indexed front-to-rear
+    x_in: float                          # column start in inches
+    x_ft: float                          # column start in feet (display)
+    x_end_in: float                      # column end (max x_in + dim_x_in)
+    placements: List[Dict[str, Any]]
+    units: int
+    # broad_category → count, e.g. {"washer": 2, "dryer": 2, "refrigerator": 1}
+    categories: Dict[str, int] = field(default_factory=dict)
+    raw_categories: List[str] = field(default_factory=list)   # original ERP labels
+    is_mixed: bool = False               # 2+ different broad_categories
+    has_stack: bool = False              # 2+ tier levels in this row
+    max_z_in: float = 0.0                # tallest item top in this row
+    total_weight_lb: float = 0.0
+
+
+def aggregate_rows(
+    placements: List[Dict[str, Any]],
+    master: Dict[str, Dict[str, Any]],
+    x_tol_in: float = 4.0,
+) -> List[LoadRow]:
+    """Group placements into physical rows by x_in column (front-to-rear).
+
+    Args:
+        placements: raw placement list from the solver
+        master: model_master dict for category lookup
+        x_tol_in: cluster placements within this many inches of each other
+                  as the same row (handles solver float drift on shared
+                  columns; default 4 in = ~10 cm)
+
+    Returns:
+        Ordered list of LoadRow, row_no 1-indexed from FRONT.
+    """
+    from engine.categorizer import broad_category
+
+    if not placements:
+        return []
+
+    # Sort by (x_in, z_in, y_in) so placements share-column-then-stack-then-lane
+    sorted_p = sorted(placements, key=lambda p: (p["x_in"], p["z_in"], p["y_in"]))
+
+    # Cluster by x_in within tolerance
+    clusters: List[List[Dict[str, Any]]] = []
+    cur: List[Dict[str, Any]] = []
+    cur_anchor: Optional[float] = None
+    for p in sorted_p:
+        x = float(p["x_in"])
+        if cur_anchor is None or abs(x - cur_anchor) <= x_tol_in:
+            cur.append(p)
+            cur_anchor = x if cur_anchor is None else cur_anchor
+        else:
+            clusters.append(cur)
+            cur = [p]
+            cur_anchor = x
+    if cur:
+        clusters.append(cur)
+
+    rows: List[LoadRow] = []
+    for i, ps in enumerate(clusters, start=1):
+        x_in_min = min(p["x_in"] for p in ps)
+        x_end = max(p["x_in"] + p.get("dim_x_in", 0) for p in ps)
+        z_max = max(p["z_in"] + p.get("dim_z_in", 0) for p in ps)
+        layers = {round(p["z_in"], 0) for p in ps}
+        weight = sum(float(p.get("weight_lb", 0)) * 1 for p in ps)
+        cats: Dict[str, int] = {}
+        raw_cats: List[str] = []
+        for p in ps:
+            mc = p.get("model_code", "")
+            spec = master.get(mc, {})
+            raw_cat = spec.get("category", p.get("category", "other"))
+            raw_cats.append(str(raw_cat))
+            broad = broad_category(str(raw_cat))
+            cats[broad] = cats.get(broad, 0) + 1
+        rows.append(LoadRow(
+            row_no=i,
+            x_in=float(x_in_min),
+            x_ft=round(x_in_min / 12.0, 1),
+            x_end_in=float(x_end),
+            placements=ps,
+            units=len(ps),
+            categories=cats,
+            raw_categories=list(dict.fromkeys(raw_cats)),  # unique, order-preserving
+            is_mixed=len(cats) > 1,
+            has_stack=len(layers) > 1,
+            max_z_in=float(z_max),
+            total_weight_lb=round(weight, 1),
+        ))
+    return rows
+
+
+# Pretty-print helper used by render_step2_v4 to summarise a row's contents
+# in one short line, e.g. "2 Refrigerator + 1 Microwave" or "12 Microwave".
+def row_summary(row: LoadRow) -> str:
+    label = {
+        "refrigerator": "Refrigerator",
+        "washer": "Washer",
+        "dryer": "Dryer",
+        "washer_dryer_pair": "Washer+Dryer",
+        "dishwasher": "Dishwasher",
+        "microwave": "Microwave",
+        "oven": "Oven",
+        "tv": "TV",
+        "monitor": "Monitor",
+        "av": "Audio",
+        "ac": "AC",
+        "other": "Other",
+    }
+    parts = [
+        f"{n} {label.get(broad, broad.capitalize())}"
+        for broad, n in sorted(row.categories.items(), key=lambda kv: -kv[1])
+    ]
+    return " + ".join(parts) if parts else f"{row.units} units"
