@@ -1205,7 +1205,10 @@ def _build_row_mini_view(
     H = float(truck_spec["height_in"])
     DT_LEN = 60.0
     DT_LOSS = 10.0
-    CUR_FILL = "#1D4ED8"; CUR_EDGE = "#1E40AF"
+    # CEO 2026-05-19: orange (#F97316) for current row — warehouse safety
+    # standard ("act now" colour, beats blue ~1.4× for glance recognition,
+    # prints clearly in black & white).
+    CUR_FILL = "#F97316"; CUR_EDGE = "#C2410C"
     GHOST_FILL = "#E2E8F0"; GHOST_EDGE = "#CBD5E1"
 
     shapes = []
@@ -1263,10 +1266,12 @@ def _build_row_mini_view(
     )
     if cur_xs:
         cx = sum(cur_xs) / len(cur_xs)
+        # White ↓ with dark stroke — readable against orange + ghost grey
+        # (CEO 2026-05-19: keep arrow contrast independent of fill colour)
         fig.add_annotation(
             x=cx, y=cur_top_y + 8,
-            text="↓", showarrow=False,
-            font=dict(size=28, color="#D97706", family="sans-serif"),
+            text="<b>↓</b>", showarrow=False,
+            font=dict(size=28, color="#111827", family="sans-serif"),
             xanchor="center", yanchor="bottom",
         )
     return fig
@@ -1725,12 +1730,15 @@ def render_step2_v4(
                 ) if r.is_mixed else ''
 
                 with cols[ci]:
+                    # CEO 2026-05-19: orange theme — warehouse "act now" colour.
+                    # step circle / position label / progress all share #F97316.
                     st.markdown(
                         f'<div style="display:flex;align-items:flex-start;gap:8px;'
                         f'margin-bottom:6px;">'
-                        f'<div style="background:#1D4ED8;color:white;width:30px;height:30px;'
+                        f'<div style="background:#F97316;color:white;width:30px;height:30px;'
                         f'border-radius:50%;display:flex;align-items:center;justify-content:center;'
-                        f'font-weight:800;font-size:14px;flex-shrink:0;">{r.row_no}</div>'
+                        f'font-weight:800;font-size:14px;flex-shrink:0;'
+                        f'box-shadow:0 1px 3px rgba(194,65,12,0.4);">{r.row_no}</div>'
                         f'<div style="flex:1;">'
                         f'<div style="font-size:14px;font-weight:700;color:#111827;'
                         f'line-height:1.2;">Row {r.row_no}{mixed_badge}</div>'
@@ -1755,11 +1763,12 @@ def render_step2_v4(
                         f'padding:5px 8px;margin-bottom:4px;">📦 {summary}</div>',
                         unsafe_allow_html=True,
                     )
-                    # Position label
+                    # Position label — orange theme
                     st.markdown(
-                        f'<div style="background:#DBEAFE;color:#1D4ED8;'
+                        f'<div style="background:#FED7AA;color:#9A3412;'
                         f'border-radius:6px;padding:5px 9px;margin-bottom:4px;'
-                        f'font-size:12px;font-weight:700;text-align:center;">'
+                        f'font-size:12px;font-weight:700;text-align:center;'
+                        f'border:1px solid #FDBA74;">'
                         f'📍 {pos}</div>',
                         unsafe_allow_html=True,
                     )
@@ -1771,6 +1780,7 @@ def render_step2_v4(
                             f'{pair_text}</div>',
                             unsafe_allow_html=True,
                         )
+                    # Progress bar — orange to match theme
                     st.markdown(
                         f'<div style="margin-top:4px;">'
                         f'<div style="font-size:9px;color:#6B7280;display:flex;'
@@ -1779,7 +1789,7 @@ def render_step2_v4(
                         f'<span>{cum_units}/{total_units} units</span></div>'
                         f'<div style="background:#E5E7EB;height:5px;border-radius:3px;'
                         f'overflow:hidden;">'
-                        f'<div style="background:linear-gradient(90deg,#10B981,#34D399);'
+                        f'<div style="background:linear-gradient(90deg,#F97316,#FDBA74);'
                         f'height:100%;width:{progress_pct}%;"></div></div>'
                         f'</div>',
                         unsafe_allow_html=True,
