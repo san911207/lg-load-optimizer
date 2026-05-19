@@ -11,16 +11,32 @@ datas, binaries, hiddenimports = [], [], []
 # Streamlit + frontend stack need their assets and metadata.
 # pulp bundles the CBC MILP solver binary under pulp/solverdir/cbc/<os>/<arch>/cbc —
 # collect_all pulls that into the bundle so the .exe ships with CBC ready to run.
-for pkg in ("streamlit", "altair", "plotly", "narwhals", "pulp", "kaleido"):
+for pkg in ("streamlit", "altair", "plotly", "narwhals", "pulp"):
     p_datas, p_binaries, p_hidden = collect_all(pkg)
     datas += p_datas
     binaries += p_binaries
     hiddenimports += p_hidden
 
+# kaleido 0.2.1 — Plotly static-image renderer. Collected separately (NOT
+# via collect_all) so PyInstaller's submodule-import walk can't trigger
+# kaleido's argparse-at-import-time code path. The 0.2.x stream ships a
+# small set of explicit submodules + an "executable" dir for the renderer.
+try:
+    from PyInstaller.utils.hooks import collect_data_files
+    datas += collect_data_files("kaleido")
+    hiddenimports += [
+        "kaleido", "kaleido.scopes", "kaleido.scopes.base",
+        "kaleido.scopes.plotly", "kaleido.executable",
+    ]
+except Exception:
+    pass
+
 # Streamlit introspects installed packages — give it metadata
 for pkg in (
     "streamlit", "plotly", "pandas", "numpy", "altair", "openpyxl",
     "Pillow", "pyarrow", "narwhals", "jinja2", "pulp", "kaleido",
+    # kaleido included so Plotly recognises it via Streamlit's metadata
+    # introspection even though we skipped collect_all (see comment above).
 ):
     try:
         datas += copy_metadata(pkg)

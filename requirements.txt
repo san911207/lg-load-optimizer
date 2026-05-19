@@ -8,10 +8,11 @@ pulp>=3.0.0
 # UI
 streamlit>=1.32.0
 plotly>=5.20.0
-# kaleido — Plotly's static image renderer. Used to embed the 3D iso as
-# a PNG for browser Cmd+P printing (Chrome/Safari print WebGL canvases
-# as blank, so we ship a server-side rendered fallback).
-kaleido>=0.2.1
+# kaleido — Plotly's static image renderer for the 3D iso print fallback
+# (Chrome/Safari print WebGL canvases as blank). Pin to 0.2.1: the 1.x
+# stream calls argparse.parse_args() at import time, which collides with
+# PyInstaller's child-process argv and breaks the Windows build.
+kaleido==0.2.1
 
 # Excel generation (PDF removed 2026-05-19 — HTML print via Cmd+P only)
 xlsxwriter>=3.2.0
