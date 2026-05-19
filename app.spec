@@ -11,7 +11,7 @@ datas, binaries, hiddenimports = [], [], []
 # Streamlit + frontend stack need their assets and metadata.
 # pulp bundles the CBC MILP solver binary under pulp/solverdir/cbc/<os>/<arch>/cbc —
 # collect_all pulls that into the bundle so the .exe ships with CBC ready to run.
-for pkg in ("streamlit", "altair", "plotly", "narwhals", "pulp"):
+for pkg in ("streamlit", "altair", "plotly", "narwhals", "pulp", "kaleido"):
     p_datas, p_binaries, p_hidden = collect_all(pkg)
     datas += p_datas
     binaries += p_binaries
@@ -20,7 +20,7 @@ for pkg in ("streamlit", "altair", "plotly", "narwhals", "pulp"):
 # Streamlit introspects installed packages — give it metadata
 for pkg in (
     "streamlit", "plotly", "pandas", "numpy", "altair", "openpyxl",
-    "Pillow", "pyarrow", "narwhals", "jinja2", "pulp",
+    "Pillow", "pyarrow", "narwhals", "jinja2", "pulp", "kaleido",
 ):
     try:
         datas += copy_metadata(pkg)
@@ -70,6 +70,8 @@ a = Analysis(
         "pulp",
         "pulp.apis",
         "pulp.apis.coin_api",
+        "kaleido",
+        "kaleido.scopes.plotly",
     ],
     hookspath=[],
     runtime_hooks=[],

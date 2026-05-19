@@ -13,6 +13,7 @@ Run    : streamlit run app.py
 """
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -1343,7 +1344,23 @@ def render_step2_v4(
             .print-page:last-child { page-break-after: auto; break-after: auto; }
             details, .stExpander { display: none !important; }
             .no-print { display: none !important; }
+
+            /* 3D iso: Plotly WebGL canvas prints blank in most browsers.
+               Hide the live chart and reveal the kaleido-rendered PNG
+               fallback embedded as an <img class="iso-3d-print">. The
+               row mini-views are 2D shape annotations (SVG, not canvas),
+               so they survive this rule unchanged. */
+            .iso-3d-print { display: block !important; }
+            .js-plotly-plot:has(.gl-canvas-context) { display: none !important; }
+            .js-plotly-plot canvas { display: none !important; }
+            /* But re-show the parent for the row mini-views which use only
+               SVG (no canvas inside them). */
+            .stPlotlyChart:not(:has(canvas)) { display: block !important; }
+
             @page { size: letter portrait; margin: 0.4in; }
+        }
+        @media screen {
+            .iso-3d-print { display: none !important; }
         }
         </style>
         """,
@@ -1526,6 +1543,27 @@ def render_step2_v4(
             key=f"step2v4_3d_{load_id}_{chosen_key}",
             config={"displayModeBar": False},
         )
+        # Print-only static PNG of the 3D iso. The interactive Plotly
+        # chart above uses WebGL, which Chrome / Safari often print as
+        # an empty canvas — losing the dispatcher's headline visual.
+        # We render the same figure server-side via kaleido once per
+        # load, embed as data: URL, and toggle visibility via CSS so
+        # the printed page always carries the 3D regardless of browser.
+        try:
+            png_bytes = fig_3d.to_image(
+                format="png", width=1200, height=520, scale=2,
+            )
+            b64 = base64.b64encode(png_bytes).decode("ascii")
+            st.markdown(
+                f'<img class="iso-3d-print" alt="3D isometric (print fallback)" '
+                f'src="data:image/png;base64,{b64}" '
+                f'style="width:100%;max-width:1200px;display:none;">',
+                unsafe_allow_html=True,
+            )
+        except Exception as e:  # noqa: BLE001
+            # kaleido not available (e.g. dev env without chromium) —
+            # skip silently; screen view still works.
+            pass
     with row1[1]:
         st.markdown(
             '<div style="font-size:11px;font-weight:700;color:#6B7280;'
