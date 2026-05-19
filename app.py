@@ -1780,10 +1780,13 @@ def render_step2_v4(
     total_units = sum(r.units for r in rows_seq)
     cum_units = 0
 
-    # Grid sizing — N=1 single full, N=2-5 row of N, N=6+ wrap 5 per row,
+    # Grid sizing — N=1 single full, N=2-3 row of N, N=4+ wrap 3 per row,
     # N≥10 Wave headers (3 waves Front/Middle/Rear from x_in distribution).
+    # CEO 2026-05-19: was 5/row but mini-trucks shrank to ~210px wide → cur
+    # box ~15-25px (unreadable). 3/row gives ~530px cards, mini-truck ~480px,
+    # cur box 30-60px (worker can actually see where to place).
     def _row_size(n: int) -> int:
-        return n if n <= 5 else 5
+        return n if n <= 3 else 3
 
     use_waves = n_total >= 10
     wave_boundaries: List[Tuple[str, int, int]] = []
