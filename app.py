@@ -994,18 +994,20 @@ def build_3d_figure(
     door_x = L - DOOR_TRACK_LENGTH_IN
     door_z = H - DOOR_TRACK_LOSS_IN
     if door_x >= 0 and door_z >= 0:
+        # CEO 2026-05-19: door track is a STRUCTURAL constraint (where
+        # the roll-up door's track lowers the ceiling), not a hazard.
+        # Use neutral grey instead of red so the worker reads it as
+        # "reserved space" rather than "danger".
         traces.append(_box_mesh(
             door_x, 0, door_z,
             DOOR_TRACK_LENGTH_IN, W, DOOR_TRACK_LOSS_IN,
-            color="#DC2626", opacity=0.30,
+            color="#94A3B8", opacity=0.25,
             hovertext="Door track · 87 in cap (5 ft from rear)",
         ))
-        # Explicit wireframe outline so the zone is unambiguous even
-        # under low opacity.
         traces.append(_box_edges(
             door_x, 0, door_z,
             DOOR_TRACK_LENGTH_IN, W, DOOR_TRACK_LOSS_IN,
-            color="#B91C1C", width=2, dash="dash",
+            color="#64748B", width=2, dash="dash",
         ))
 
     # Free space outline after last box
@@ -1019,18 +1021,20 @@ def build_3d_figure(
     # FRONT / REAR text anchors so the viewer can orient without
     # reading the axis ticks (Phase D — Forklift Op audit asked for
     # bigger orientation cues).
+    # FRONT / REAR orientation anchors — colour unified across the screen
+    # 3D iso AND the row mini-views (cab is dark ink, rear is door grey).
     traces.append(go.Scatter3d(
         x=[0], y=[W * 0.5], z=[H + 4],
         mode="text",
-        text=["▶ FRONT (cab)"],
+        text=["⬅ FRONT (cab)"],
         textfont=dict(size=14, color="#1F2937", family="Arial Black"),
         hoverinfo="skip", showlegend=False,
     ))
     traces.append(go.Scatter3d(
         x=[L], y=[W * 0.5], z=[H + 4],
         mode="text",
-        text=["REAR ◀"],
-        textfont=dict(size=14, color="#B91C1C", family="Arial Black"),
+        text=["REAR 🚪 (door)"],
+        textfont=dict(size=14, color="#475569", family="Arial Black"),
         hoverinfo="skip", showlegend=False,
     ))
 
@@ -1218,11 +1222,14 @@ def _build_row_mini_view(
         line=dict(color="#94A3B8", width=2),
         fillcolor="#F8FAFC", layer="below",
     ))
+    # Door track — structural constraint (roll-up door lowers ceiling).
+    # CEO 2026-05-19: neutral grey, not red (red implies "danger" — wrong
+    # signal for what is just "reserved space").
     shapes.append(dict(
         type="rect",
         x0=L - DT_LEN, y0=H - DT_LOSS, x1=L, y1=H,
-        line=dict(color="#B91C1C", width=1, dash="dash"),
-        fillcolor="rgba(220,38,38,0.18)", layer="below",
+        line=dict(color="#64748B", width=1, dash="dash"),
+        fillcolor="rgba(148,163,184,0.25)", layer="below",
     ))
 
     cur_xs: list = []
@@ -1255,14 +1262,15 @@ def _build_row_mini_view(
         margin=dict(l=4, r=4, t=4, b=4),
         paper_bgcolor="white", plot_bgcolor="white", showlegend=False,
     )
+    # Labels — unified with 3D iso (FRONT/cab dark ink, REAR/door grey).
     fig.add_annotation(
-        x=2, y=H + 10, text="⬅ FRONT", showarrow=False,
-        font=dict(size=11, color="#4338CA", family="sans-serif"),
+        x=2, y=H + 10, text="⬅ FRONT (cab)", showarrow=False,
+        font=dict(size=11, color="#1F2937", family="sans-serif"),
         xanchor="left", yanchor="bottom",
     )
     fig.add_annotation(
-        x=L - 2, y=H + 10, text="REAR 🚪", showarrow=False,
-        font=dict(size=11, color="#4338CA", family="sans-serif"),
+        x=L - 2, y=H + 10, text="REAR 🚪 (door)", showarrow=False,
+        font=dict(size=11, color="#475569", family="sans-serif"),
         xanchor="right", yanchor="bottom",
     )
     if cur_xs:
@@ -1674,6 +1682,35 @@ def render_step2_v4(
     n_total = len(rows_seq)
     truck_len_in = float(truck_spec["length_in"])
 
+    # Category → emoji icon (small visual cue for the worker glancing at
+    # the row card). Mixed rows show the most-common category icon plus
+    # a small "+N" hint suffix for the others.
+    CAT_ICON = {
+        "refrigerator": "🥶",
+        "washer": "🫧",
+        "dryer": "♨️",
+        "washer_dryer_pair": "🫧",
+        "dishwasher": "🍽",
+        "microwave": "🔥",
+        "oven": "🔥",
+        "tv": "📺",
+        "monitor": "🖥",
+        "av": "🔊",
+        "ac": "❄️",
+        "other": "📦",
+    }
+
+    def _row_icon(row) -> str:
+        if not row.categories:
+            return "📦"
+        # Sort by count desc; pick dominant; suffix '+N' if mixed.
+        sorted_cats = sorted(row.categories.items(), key=lambda kv: -kv[1])
+        primary = sorted_cats[0][0]
+        icon = CAT_ICON.get(primary, "📦")
+        if len(sorted_cats) > 1:
+            return f"{icon}<sup style='font-size:9px;color:#9A3412;'>+{len(sorted_cats)-1}</sup>"
+        return icon
+
     def _row_position_hint(row) -> str:
         """FRONT / MIDDLE / REAR · LAYER N — based on this row's x and z."""
         avg_x = (row.x_in + row.x_end_in) / 2.0
@@ -1758,13 +1795,16 @@ def render_step2_v4(
                 summary = row_summary(r)
                 cum_units += r.units
                 progress_pct = int(cum_units / max(total_units, 1) * 100)
-                title = f"Row {r.row_no}"
-                if r.is_mixed:
-                    title += " · MIXED"
+                icon_html = _row_icon(r)
+                # MIXED badge — bigger + bordered for visibility against the
+                # orange theme (was small/quiet — CEO 2026-05-19 asked for
+                # more prominent differentiation).
                 mixed_badge = (
-                    '<span style="background:#FEF3C7;color:#92400E;'
-                    'padding:1px 6px;border-radius:3px;font-size:9px;'
-                    'font-weight:700;margin-left:4px;">MIXED</span>'
+                    '<span style="background:#FED7AA;color:#7C2D12;'
+                    'padding:2px 8px;border-radius:999px;font-size:10px;'
+                    'font-weight:800;margin-left:6px;'
+                    'border:1.5px solid #C2410C;letter-spacing:0.04em;">'
+                    '⚠ MIXED</span>'
                 ) if r.is_mixed else ''
 
                 with cols[ci]:
@@ -1779,7 +1819,9 @@ def render_step2_v4(
                         f'box-shadow:0 1px 3px rgba(194,65,12,0.4);">{r.row_no}</div>'
                         f'<div style="flex:1;">'
                         f'<div style="font-size:14px;font-weight:700;color:#111827;'
-                        f'line-height:1.2;">Row {r.row_no}{mixed_badge}</div>'
+                        f'line-height:1.2;">'
+                        f'<span style="font-size:16px;margin-right:4px;">{icon_html}</span>'
+                        f'Row {r.row_no}{mixed_badge}</div>'
                         f'<div style="font-size:11px;color:#6B7280;margin-top:2px;">'
                         f'<b>{r.units}</b> units · <b>{int(r.total_weight_lb):,}</b> lb</div>'
                         f'</div>'
