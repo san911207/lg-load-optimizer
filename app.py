@@ -1288,6 +1288,135 @@ def _build_row_mini_view(
     return fig
 
 
+def _build_row_iso_3d_figure(
+    rows_so_far: list,
+    truck_spec: Dict[str, Any],
+    current_row_idx: int,
+) -> "go.Figure":
+    """3D isometric view focused on one row (CEO 2026-05-19).
+
+    Same data as build_3d_figure, but coloured so the worker's eye lands on
+    the current row only:
+      • Items in rows 0..current_idx-1 → grey ghost
+      • Items in the current row       → bright orange + dark edge
+      • Items not yet loaded (after current) → not drawn
+    The figure is rendered to a static PNG via kaleido at print time so the
+    worker actually sees depth + lane + tier in one glance, instead of
+    inferring them from a 2D side-view.
+    """
+    import plotly.graph_objects as go
+    L = float(truck_spec["length_in"])
+    W = float(truck_spec["width_in"])
+    H = float(truck_spec["height_in"])
+    CUR_FILL = "#F97316"; CUR_EDGE = "#C2410C"
+    GHOST_FILL = "#E2E8F0"; GHOST_EDGE = "#94A3B8"
+
+    traces: List[Any] = []
+    # Truck wireframe — dotted grey
+    traces.append(_box_edges(0, 0, 0, L, W, H, color="#9CA3AF", width=1, dash="dot"))
+
+    # Door track grey
+    door_x = L - DOOR_TRACK_LENGTH_IN
+    door_z = H - DOOR_TRACK_LOSS_IN
+    if door_x >= 0 and door_z >= 0:
+        traces.append(_box_mesh(
+            door_x, 0, door_z,
+            DOOR_TRACK_LENGTH_IN, W, DOOR_TRACK_LOSS_IN,
+            color="#94A3B8", opacity=0.12,
+        ))
+
+    cur_xs: list = []
+    cur_top_z: float = 0.0
+    for r_idx, row in enumerate(rows_so_far[: current_row_idx + 1]):
+        is_current = (r_idx == current_row_idx)
+        for p in row.placements:
+            if is_current:
+                fill = CUR_FILL; edge = CUR_EDGE; opacity = 0.95
+                cur_xs.append(p["x_in"] + p["dim_x_in"] / 2)
+                cur_top_z = max(cur_top_z, p["z_in"] + p["dim_z_in"])
+            else:
+                fill = GHOST_FILL; edge = GHOST_EDGE; opacity = 0.42
+            traces.append(_box_mesh(
+                p["x_in"], p["y_in"], p["z_in"],
+                p["dim_x_in"], p["dim_y_in"], p["dim_z_in"],
+                color=fill, opacity=opacity,
+            ))
+            traces.append(_box_edges(
+                p["x_in"], p["y_in"], p["z_in"],
+                p["dim_x_in"], p["dim_y_in"], p["dim_z_in"],
+                color=edge, width=1.0,
+            ))
+
+    # FRONT / REAR text anchors (small, since the row card is compact)
+    traces.append(go.Scatter3d(
+        x=[0], y=[W * 0.5], z=[H + 3],
+        mode="text",
+        text=["⬅ FRONT"],
+        textfont=dict(size=11, color="#1F2937", family="Arial Black"),
+        hoverinfo="skip", showlegend=False,
+    ))
+    traces.append(go.Scatter3d(
+        x=[L], y=[W * 0.5], z=[H + 3],
+        mode="text",
+        text=["REAR 🚪"],
+        textfont=dict(size=11, color="#475569", family="Arial Black"),
+        hoverinfo="skip", showlegend=False,
+    ))
+    # ↓ arrow above current-row centroid
+    if cur_xs:
+        cx = sum(cur_xs) / len(cur_xs)
+        traces.append(go.Scatter3d(
+            x=[cx], y=[W * 0.5], z=[cur_top_z + 8],
+            mode="text",
+            text=["↓"],
+            textfont=dict(size=28, color="#111827", family="Arial Black"),
+            hoverinfo="skip", showlegend=False,
+        ))
+
+    fig = go.Figure(data=traces)
+    fig.update_layout(
+        scene=dict(
+            xaxis=dict(showbackground=False, showticklabels=False, title=""),
+            yaxis=dict(showbackground=False, showticklabels=False, title=""),
+            zaxis=dict(showbackground=False, showticklabels=False, title=""),
+            aspectmode="data",
+            camera=dict(eye=dict(x=1.6, y=-2.0, z=1.1)),
+        ),
+        height=280,
+        margin=dict(l=0, r=0, t=0, b=0),
+        showlegend=False,
+        paper_bgcolor="white",
+    )
+    return fig
+
+
+def _row_3d_png_bytes(
+    rows_seq: list,
+    truck_spec: Dict[str, Any],
+    current_row_idx: int,
+    cache_key: str,
+    width: int = 700,
+    height: int = 280,
+) -> Optional[bytes]:
+    """Generate (or fetch from session cache) the row-iso 3D PNG bytes.
+
+    Caching key is supplied by caller (must include load_id + truck_key +
+    row_no + master fingerprint so a re-solve invalidates correctly).
+    Returns None if kaleido is unavailable so the caller can fall back
+    to the 2D side-view.
+    """
+    cached = st.session_state.get(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        fig = _build_row_iso_3d_figure(rows_seq, truck_spec, current_row_idx)
+        png = fig.to_image(format="png", width=width, height=height, scale=2)
+        st.session_state[cache_key] = png
+        return png
+    except Exception:
+        return None
+
+
 def _kpi_cell_html(label: str, value: str, sub: str, kind: str = "neutral") -> str:
     """Return one HTML <div> for the KPI strip."""
     palette = {
@@ -1894,15 +2023,33 @@ def render_step2_v4(
                         f'</div>',
                         unsafe_allow_html=True,
                     )
-                    # Mini truck — Plotly chart can't be CSS-dimmed via markdown,
-                    # but cumulative-ghost rendering already shows context. Visual
-                    # de-emphasis is OK via the surrounding text fade.
-                    fig_mini = _build_row_mini_view(truck_spec, rows_seq, i)
-                    st.plotly_chart(
-                        fig_mini, use_container_width=True,
-                        config={"displayModeBar": False, "staticPlot": True},
-                        key=f"row_mini_{load_id}_{chosen_key}_{i}",
-                    )
+                    # Row 3D iso — static PNG via kaleido (CEO 2026-05-19).
+                    # Cached per row in session_state so subsequent re-renders
+                    # are instant. The cache key includes the rows-fingerprint
+                    # so any re-solve (master / truck change) invalidates.
+                    row_fp = hash(tuple(
+                        (p["x_in"], p["y_in"], p["z_in"], p.get("seq", 0))
+                        for p in r.placements
+                    ))
+                    row_3d_key = f"row3d_{load_id}_{chosen_key}_{i}_{row_fp}"
+                    png_b = _row_3d_png_bytes(rows_seq, truck_spec, i, row_3d_key)
+                    if png_b is not None:
+                        b64 = base64.b64encode(png_b).decode("ascii")
+                        st.markdown(
+                            f'<img src="data:image/png;base64,{b64}" '
+                            f'alt="Row {r.row_no} 3D iso" '
+                            f'style="{dim}width:100%;border:1.5px solid #94A3B8;'
+                            f'border-radius:4px;margin:8px 0 6px;display:block;">',
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        # Fallback — 2D side-view (kaleido unavailable)
+                        fig_mini = _build_row_mini_view(truck_spec, rows_seq, i)
+                        st.plotly_chart(
+                            fig_mini, use_container_width=True,
+                            config={"displayModeBar": False, "staticPlot": True},
+                            key=f"row_mini_{load_id}_{chosen_key}_{i}",
+                        )
                     # Item summary
                     st.markdown(
                         f'<div style="{dim}font-size:12px;font-weight:700;color:#111827;'
