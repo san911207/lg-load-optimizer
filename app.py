@@ -1010,12 +1010,14 @@ def build_3d_figure(
             color="#64748B", width=2, dash="dash",
         ))
 
-    # Free space outline after last box
+    # Free space outline after last box — neutral grey (CEO 2026-05-19:
+    # green implied "success/OK", confusing for what is just "available").
+    # Pairs with the grey door zone — both are "space not used by cargo".
     x_used = sim["metrics"]["x_used_in"]
     if L - x_used > 100:
         traces.append(_box_edges(
             x_used, 0, 0, L - x_used, W, H,
-            color="#10B981", width=2, dash="dash",
+            color="#94A3B8", width=2, dash="dash",
         ))
 
     # FRONT / REAR text anchors so the viewer can orient without
@@ -1365,6 +1367,19 @@ def render_step2_v4(
                SVG (no canvas inside them). */
             .stPlotlyChart:not(:has(canvas)) { display: block !important; }
 
+            /* CEO 2026-05-19 ④: Print compactness — shrink row mini-views
+               and tighten padding so 18 row cards can fit on a single
+               letter-portrait page. */
+            .stPlotlyChart:not(:has(canvas)) {
+                height: 90px !important;
+                min-height: 90px !important;
+                max-height: 95px !important;
+            }
+            [data-testid="stColumn"] { padding: 0 4px !important; }
+            /* Streamlit checkbox is irrelevant on paper — hide. The visual
+               square in the card header is the print-checkable marker. */
+            [data-testid="stCheckbox"] { display: none !important; }
+
             @page { size: letter portrait; margin: 0.4in; }
         }
         @media screen {
@@ -1558,8 +1573,11 @@ def render_step2_v4(
         # load, embed as data: URL, and toggle visibility via CSS so
         # the printed page always carries the 3D regardless of browser.
         try:
+            # 1400×500 ≈ 2.8:1 — matches the actual truck length:height
+            # ratio (~26ft × ~9ft = 2.83:1). Was 1200×520 = 2.3:1 (slight
+            # vertical squash).
             png_bytes = fig_3d.to_image(
-                format="png", width=1200, height=520, scale=2,
+                format="png", width=1400, height=500, scale=2,
             )
             b64 = base64.b64encode(png_bytes).decode("ascii")
             st.markdown(
@@ -1721,14 +1739,30 @@ def render_step2_v4(
         return f"{zone_x} · {row.x_ft:.1f} ft{stack}"
 
     def _row_pair_note(row, idx: int) -> str:
-        """Identify stacked-pair situations within a row."""
+        """Pair indicator — chip-style (CEO 2026-05-19 ⑤). Short HTML
+        chips with ×count + ↑ stack arrow encode the info in a fraction
+        of the width vs the original descriptive sentence.
+        Returns raw HTML; rendered via unsafe_allow_html=True below."""
         cats = row.categories
+        chip_style = (
+            "background:#92400E;color:white;border-radius:3px;"
+            "padding:1px 5px;font-size:10px;font-weight:700;"
+            "letter-spacing:0.02em;"
+        )
         if "washer" in cats and "dryer" in cats:
-            return f"⛓ Washer ({cats['washer']}) on floor, Dryer ({cats['dryer']}) ON TOP"
+            return (
+                f'<span style="{chip_style}">WASHER ×{cats["washer"]}</span>'
+                f' <span style="font-size:12px;">⛓</span> '
+                f'<span style="{chip_style}">DRYER ×{cats["dryer"]} ↑</span>'
+            )
         if row.has_stack and "dryer" in cats and idx > 0:
             prv = rows_seq[idx - 1]
             if "washer" in prv.categories:
-                return f"⛓ Dryer ON TOP of Row {prv.row_no} Washers"
+                return (
+                    f'<span style="{chip_style}">DRYER ×{cats["dryer"]} ↑</span>'
+                    f' <span style="font-size:10px;color:#7C2D12;">'
+                    f'on Row {prv.row_no}</span>'
+                )
         return ""
 
     st.markdown(
@@ -1808,15 +1842,43 @@ def render_step2_v4(
                 ) if r.is_mixed else ''
 
                 with cols[ci]:
-                    # CEO 2026-05-19: orange theme — warehouse "act now" colour.
-                    # step circle / position label / progress all share #F97316.
+                    # CEO 2026-05-19 ③: native Streamlit checkbox lets the
+                    # worker click "Mark done" on screen. When checked, every
+                    # card section dims via inline style (Streamlit splits
+                    # markdown components — wrapping <div> doesn't span them,
+                    # so we apply opacity to each section individually).
+                    done_key = f"done_{load_id}_{chosen_key}_{r.row_no}"
+                    is_done = st.checkbox(
+                        f"✓ Row {r.row_no} 완료",
+                        key=done_key, value=False,
+                        label_visibility="collapsed",
+                    )
+                    # Per-section dim style + circle/indicator state.
+                    dim = "opacity:0.5;filter:saturate(0.3);" if is_done else ""
+                    if is_done:
+                        circle_bg = "#94A3B8"
+                        indicator = (
+                            '<span style="width:24px;height:24px;background:#10B981;'
+                            'color:white;border:2.5px solid #10B981;border-radius:4px;'
+                            'flex-shrink:0;display:flex;align-items:center;'
+                            'justify-content:center;font-weight:800;font-size:18px;'
+                            'line-height:1;" title="Done">✓</span>'
+                        )
+                    else:
+                        circle_bg = "#F97316"
+                        indicator = (
+                            '<span style="width:24px;height:24px;border:2.5px solid '
+                            '#111827;border-radius:4px;flex-shrink:0;" '
+                            'title="Toggle the checkbox above to mark done"></span>'
+                        )
+                    # Header
                     st.markdown(
-                        f'<div style="display:flex;align-items:flex-start;gap:8px;'
-                        f'margin-bottom:6px;">'
-                        f'<div style="background:#F97316;color:white;width:30px;height:30px;'
+                        f'<div style="{dim}display:flex;align-items:flex-start;'
+                        f'gap:8px;margin-bottom:6px;">'
+                        f'<div style="background:{circle_bg};color:white;width:30px;height:30px;'
                         f'border-radius:50%;display:flex;align-items:center;justify-content:center;'
                         f'font-weight:800;font-size:14px;flex-shrink:0;'
-                        f'box-shadow:0 1px 3px rgba(194,65,12,0.4);">{r.row_no}</div>'
+                        f'box-shadow:0 1px 3px rgba(0,0,0,0.18);">{r.row_no}</div>'
                         f'<div style="flex:1;">'
                         f'<div style="font-size:14px;font-weight:700;color:#111827;'
                         f'line-height:1.2;">'
@@ -1825,27 +1887,29 @@ def render_step2_v4(
                         f'<div style="font-size:11px;color:#6B7280;margin-top:2px;">'
                         f'<b>{r.units}</b> units · <b>{int(r.total_weight_lb):,}</b> lb</div>'
                         f'</div>'
-                        f'<div style="width:24px;height:24px;border:2.5px solid #111827;'
-                        f'border-radius:4px;flex-shrink:0;" title="Check when row loaded"></div>'
+                        f'{indicator}'
                         f'</div>',
                         unsafe_allow_html=True,
                     )
+                    # Mini truck — Plotly chart can't be CSS-dimmed via markdown,
+                    # but cumulative-ghost rendering already shows context. Visual
+                    # de-emphasis is OK via the surrounding text fade.
                     fig_mini = _build_row_mini_view(truck_spec, rows_seq, i)
                     st.plotly_chart(
                         fig_mini, use_container_width=True,
                         config={"displayModeBar": False, "staticPlot": True},
                         key=f"row_mini_{load_id}_{chosen_key}_{i}",
                     )
-                    # Item summary (mixed vs uniform)
+                    # Item summary
                     st.markdown(
-                        f'<div style="font-size:12px;font-weight:700;color:#111827;'
+                        f'<div style="{dim}font-size:12px;font-weight:700;color:#111827;'
                         f'background:#F8FAFC;border:1px solid #E2E8F0;border-radius:4px;'
                         f'padding:5px 8px;margin-bottom:4px;">📦 {summary}</div>',
                         unsafe_allow_html=True,
                     )
-                    # Position label — orange theme
+                    # Position label
                     st.markdown(
-                        f'<div style="background:#FED7AA;color:#9A3412;'
+                        f'<div style="{dim}background:#FED7AA;color:#9A3412;'
                         f'border-radius:6px;padding:5px 9px;margin-bottom:4px;'
                         f'font-size:12px;font-weight:700;text-align:center;'
                         f'border:1px solid #FDBA74;">'
@@ -1854,15 +1918,15 @@ def render_step2_v4(
                     )
                     if pair_text:
                         st.markdown(
-                            f'<div style="background:#FEF3C7;border:1px solid #FCD34D;'
+                            f'<div style="{dim}background:#FEF3C7;border:1px solid #FCD34D;'
                             f'color:#92400E;border-radius:4px;padding:4px 8px;'
                             f'font-size:10.5px;font-weight:700;margin-bottom:4px;">'
                             f'{pair_text}</div>',
                             unsafe_allow_html=True,
                         )
-                    # Progress bar — orange to match theme
+                    # Progress bar
                     st.markdown(
-                        f'<div style="margin-top:4px;">'
+                        f'<div style="{dim}margin-top:4px;">'
                         f'<div style="font-size:9px;color:#6B7280;display:flex;'
                         f'justify-content:space-between;">'
                         f'<span>After Row {r.row_no}</span>'
